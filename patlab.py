@@ -1354,7 +1354,7 @@ def main():
 			for i in range( len(patches) ):
 				checksum -= patches[i]
 				_check_empty( None, "Pacifier" )
-			_check_empty( error_occurred, "Sum minus all patches should be empty" )
+			_check_empty( checksum, "Sum minus all patches should be empty" )
 			print " ok"
 			print "  Swapping: ",
 			for i in range( len(patches)-1 ):
