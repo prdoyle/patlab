@@ -217,10 +217,11 @@ function get_absolute_path(){
 function common_options(){
 	ALLOWED_OPTIONS="$1"; shift
 	TOUCH_NONEXISTENT_FILES="no"
+	OPTIND=0
 	while getopts "$ALLOWED_OPTIONS" Option; do case $Option in
 		N) TOUCH_NONEXISTENT_FILES="yes";; # Reminiscent of diff -N
 	esac done
-	NUM_COMMON_OPTIONS="$(($OPTIND - 1))"
+	NUM_COMMON_OPTIONS="$((OPTIND - 1))"
 }
 
 function standard_variables(){ # Sets a bunch of variables pertaining to the top patch, or fails if there is no top patch
@@ -480,6 +481,7 @@ function CMD_forget(){
 	standard_variables # We don't actually need this, but it does some handy consistency checks
 	diff -q $STACK $REVERTIBLE || internal_error "Repository is in an inconsistent state"
 	local ARCHIVE=""
+	OPTIND=0
 	while getopts "a" option; do case $option in
 		a) archive=1;
 		   [ -d $archive_dir ] || die "archive dir does not exist: $archive_dir"
@@ -568,6 +570,7 @@ function CMD_init(){
 function CMD_patches(){
 	local VERBOSE="no"
 	local FULL_FILE_NAMES="no"
+	OPTIND=0
 	while getopts "vl" Option; do case $Option in
 		v) VERBOSE="yes";;
 		l) FULL_FILE_NAMES="yes";; # Meant to be reminiscent of grep -l
@@ -600,6 +603,7 @@ function CMD_top(){
 function CMD_pop(){
 	local TOUCH="touch"
 	local POP_ALL="no"
+	OPTIND=0
 	while getopts "at" Option; do case $Option in
 		a) POP_ALL="yes";;
 		t) TOUCH="don't touch";;
@@ -673,6 +677,7 @@ function CMD_revert(){
 	standard_variables incomplete_is_ok
 	local COMPLETE=""
 	local TOUCH="touch"
+	OPTIND=0
 	while getopts "ct" Option; do case $Option in
 		c) COMPLETE=1;;
 		t) TOUCH="don't touch";;
@@ -783,6 +788,7 @@ function CMD_shelve(){
 }
 
 function CMD_revive(){
+	OPTIND=0
 	while getopts "p" Option; do case $Option in
 		p) PARTIAL=1;; # revive on top of other patches
 	esac done
