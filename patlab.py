@@ -602,11 +602,13 @@ class Patch( Enumerable, UIObject, Algebraic ):
 
 	def split( self, line_number ):
 		matching_diffs = [ d for d in self.diffs if d._hunk_with_left_line_number( line_number ) ]
-		if len( matching_diffs ) != 1:
+		if len( matching_diffs ) >= 2:
 			raise AmbiguousLineNumberError
-		else:
+		elif matching_diffs:
 			matching_diff = matching_diffs[0]
-		return self.split_diff( matching_diff, line_number )
+			return self.split_diff( matching_diff, line_number )
+		else:
+			return self
 
 	def split_diff( self, diff, line_number ):
 		assert( diff in self.diffs )
