@@ -1,0 +1,20 @@
+--- before/patlab.py	2012-06-09 14:06:41.353775000 -0400
++++ after/patlab.py	2012-06-09 14:07:00.833776538 -0400
+@@ -32,7 +32,7 @@
+ 		io = cStringIO.StringIO()
+ 		self.write_abstract_to( io )
+ 		result = io.getvalue()
+-		io.close()
++		io.close() # zag
+ 		return result
+ 
+ 	def contents( self ):
+@@ -40,7 +40,7 @@
+ 		self.write_contents_to( io )
+ 		result = io.getvalue()
+ 		io.close()
+-		return result
++		return result # zag
+ 
+ 	def __repr__( self ): return self.abstract()
+ 	def __str__( self ):  return self.contents()

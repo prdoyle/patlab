@@ -1,0 +1,20 @@
+--- before/patlab.py	2012-06-09 15:10:00.310195000 -0400
++++ after/patlab.py	2012-06-09 15:10:46.307712841 -0400
+@@ -595,7 +595,7 @@
+ 			result.lines.extend( extension )
+ 		return result.normalize()
+ 
+-	def shadow( self, other ):
++	def shadow( self, other ): # harmless change
+ 		# I'd like to abstract this and combine it with compose.
+ 		# Just to get it working I've separated it into its own method.
+ 
+@@ -628,7 +628,7 @@
+ 		# in the final patch.  Use shrinkwrapped() to trim unwanted
+ 		# context lines.
+ 
+-		while self_feeder and other_feeder:
++		while self_feeder and other_feeder: # conflict-causing change
+ 			debug( "shadow", "Feeders: %3d|%-3d %3d|%-3d", self_feeder.line_number1, self_feeder.line_number2, other_feeder.line_number1, other_feeder.line_number2 )
+ 			debug( "shadow", "  self top pair: %s", self_feeder.top_pair() )
+ 			if self_feeder.line_number2 < other_feeder.line_number1:

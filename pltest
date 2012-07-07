@@ -1,0 +1,11 @@
+#! /bin/bash
+
+DIRS=${*:-test*}
+
+set -e
+
+for DIR in $DIRS; do
+	echo -e "*** $DIR ***"
+	python ./patlab.py -t $DIR/*.patch
+	echo -e "  done"
+done

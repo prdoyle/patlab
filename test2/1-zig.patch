@@ -1,0 +1,20 @@
+--- before/patlab.py	2012-06-09 14:05:41.686899000 -0400
++++ after/patlab.py	2012-06-09 14:07:06.470522908 -0400
+@@ -28,7 +28,7 @@
+ 		io.close()
+ 		return result
+ 
+-	def abstract( self ):
++	def abstract( self ): # zig
+ 		io = cStringIO.StringIO()
+ 		self.write_abstract_to( io )
+ 		result = io.getvalue()
+@@ -36,7 +36,7 @@
+ 		return result
+ 
+ 	def contents( self ):
+-		io = cStringIO.StringIO()
++		io = cStringIO.StringIO() # zig
+ 		self.write_contents_to( io )
+ 		result = io.getvalue()
+ 		io.close()
