@@ -29,6 +29,7 @@ def debug( tag, *args ):
 path_strip_level = 1
 
 def _stripped_path( path ):
+	"""Performs path stripping like patch -p"""
 	i = 0
 	for _ in xrange( path_strip_level ):
 		i = 1 + path.find( '/', i )
@@ -78,6 +79,7 @@ class IncompatibleFileRenameError( PatlabError ):
 		return "IncompatibleChangeToSameLineError:\n   %s\n   %s" % ( repr(self.left_line), repr(self.right_line) )
 
 class UIObject:
+	"""Handy display functionality"""
 
 	def girth( self ):
 		io = cStringIO.StringIO()
@@ -114,6 +116,7 @@ class UIObject:
 	def __str__( self ):  return self.contents()
 
 class Algebraic:
+	"""Defines a number of mathematical operators in terms of methods to be supplied by subclasses"""
 	# For convenience, the symbolic operators return shrinkwrapped results.
 	# If you want the raw results, use the ordinary method names.
 
@@ -136,6 +139,7 @@ class Algebraic:
 	def __xor__( self, lineno ): return self.split( lineno ) # Shrinkwrapping undoes splitting, so we don't shrinkwrap this one
 
 class Enumerable:
+	"""Handy functionality for all classes composed of a sequence of parts"""
 
 	def write_girth_to( self, file ):
 		sep = ''
@@ -199,6 +203,7 @@ def _any_line_matches( hunks, predicate ):
 	return False
 
 class Filter:
+	"""Divides a patch/diff into two patches/diffs"""
 
 	def normalize( self, things ):
 		return map( lambda t: t.normalize(), things )
@@ -206,6 +211,7 @@ class Filter:
 class Piecewise_Filter( Filter ):
 
 	def partition_elements( self, source, filter_func, targets ):
+		"""Divides the elements of an Enumerable into two lists based on filter_func"""
 		[ yes, no ] = targets
 		for e in source.elements():
 			[ y, n ] = filter_func( e )
@@ -216,6 +222,7 @@ class Piecewise_Filter( Filter ):
 		return targets
 
 class Patches( Filter ):
+	"""A filter working at the patch granularity"""
 
 	def __init__( self, predicate ):
 		self.patch_filter = _filter( predicate )
@@ -224,6 +231,7 @@ class Patches( Filter ):
 		return self.normalize( self.patch_filter( patch ) )
 
 class Diffs( Piecewise_Filter ):
+	"""A filter working at the diff granularity"""
 
 	def __init__( self, predicate ):
 		self.diff_filter = _filter( predicate )
@@ -250,6 +258,7 @@ def _fix_left_line_numbers( hunks ):
 		offset = h.lstop - h.rstop
 
 class Hunks( Piecewise_Filter ):
+	"""A filter working at the hunk granularity"""
 
 	def __init__( self, predicate ):
 		self.hunk_filter = _filter( predicate )
@@ -269,11 +278,13 @@ class Hunks( Piecewise_Filter ):
 		return self.normalize([ yes, no ])
 
 class Hunks_With_Lines( Hunks ):
+	"""A filter working at the hunk granularity using a line-based predicate"""
 
 	def __init__( self, predicate ):
 		self.hunk_filter = _filter( lambda h: _any_line_matches( h, predicate ) )
 
 class Hunks_With_Conflicts( Hunks ):
+	"""A filter for hunks that will conflict with a given "hurdle" patch during the "over" operation"""
 
 	def __init__( self, hurdle_patch ):
 		self.hurdle_patch = hurdle_patch # "hurdle_patch" is the patch you're trying to get over (get it?  ha ha)
@@ -319,6 +330,10 @@ class Hunks_With_Conflicts( Hunks ):
 
 
 class Stack( Enumerable, UIObject ):
+	"""
+	A sequence of patches to be applied in reverse-index order; that is,
+	patches[-1] can be composed with patches[-2] and so forth.
+	"""
 
 	def __init__( self, name ):
 		self.patches = []
@@ -337,6 +352,7 @@ class Stack( Enumerable, UIObject ):
 		return result
 
 	def sink( self, *index ):
+		"""Move the patch at index[0] downward to index[1] (or index[0]+1 by default)."""
 		try:
 			[ start, end ] = index
 			for i in range( start, end ):
@@ -354,6 +370,7 @@ class Stack( Enumerable, UIObject ):
 			return self
 
 	def float( self, *index ):
+		"""Move the patch at index[0] upward to index[1] (or index[0]-1 by default)."""
 		try:
 			[ start, end ] = index
 			for i in range( start, end, -1 ):
@@ -364,21 +381,37 @@ class Stack( Enumerable, UIObject ):
 			return self.sink( index-1 )
 
 	def squash( self, index ):
+		"""Replace patches at index and index+1 a new patch composed from the original two"""
 		self.patches[ index:index+2 ] = [ self.patches[ index+1 ] + self.patches[ index ] ]
 		return self
 
 	def filter( self, index, filter ):
+		"""Replace patch at index with two patches formed by filtering the original patch using the given filter"""
 		[ matching, non_matching ] = filter.partition_patch( self.patches[ index ] )
 		self.patches[ index:index+1 ] = [ matching.shrinkwrapped(), non_matching.shrinkwrapped() ]
 		return self
 
 	def grep( self, index, regex ):
+		"""
+		Replace patch at index with two patches: index contains all hunks with at
+		least one line matching the given regex, and index+1 contains all the
+		non-matching hunks.
+		"""
 		return self.filter( index, Hunks_With_Lines( lambda l: re.search( regex, l.content ) ) )
 
-	def glob( self, index, pattern ):
-		return self.filter( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], pattern ) ) )
+	def glob( self, index, filename_pattern ):
+		"""
+		Replace patch at index with two patches: index contains all diffs for
+		files matching the given filename pattern, and index+1 contains all the
+		non-matching hunks.
+		"""
+		return self.filter( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], filename_pattern ) ) )
 
 	def conflicts( self ):
+		"""
+		Find and print the indexes of all patches that would conflict were we to
+		attempt the "over" operation.
+		"""
 		for f in range( len(self.patches)-1, 0, -1 ):
 			floater = self.patches[ f ]
 			for s in range( 0, f ):
@@ -390,6 +423,7 @@ class Stack( Enumerable, UIObject ):
 					continue
 
 	def sum( self ):
+		"""Compute the composition of all patches on the stack"""
 		return reduce( lambda a,b:a+b, reversed( self.patches ) )
 
 	def _temp_patch_file( self, patch ):
@@ -427,14 +461,21 @@ class Stack( Enumerable, UIObject ):
 		return filter( None, [ upper2, lower2 ] )
 
 	def edit( self, index ):
+		"""Open the patch at the given index in a text editor, then re-parse it afterward"""
 		self.patches[ index ] = self._edit1( self.patches[ index ] )
 		return self
 
 	def edit2( self, index ):
+		"""Open the pair of adjacent patches at the given index in a text editor, then re-parse them and fix-up their line numbers"""
 		self.patches[ index:index+2 ] = self._edit2( self.patches[ index:index+2 ] )
 		return self
 
 	def sift( self, index ):
+		"""
+		Open the patches at the given index in a text editor, along with new
+		empty patch file, so the user can move some diffs/hunks from the original
+		patch to the new patch; then re-parse them and fix-up their line numbers.
+		"""
 		original = patches[ index ]
 		patches[ index:index+1 ] = self._edit2([ Patch( original.name + ".upper" ), original ])
 		return self
@@ -470,6 +511,7 @@ def _over_func( left, right ):
 		return []
 
 class Patch( Enumerable, UIObject, Algebraic ):
+	"""A collection of diffs"""
 
 	def __init__( self, name ):
 		self.diffs = []
@@ -725,6 +767,7 @@ def _is_always_increasing( items ):
 	return True
 
 class Diff( Enumerable, UIObject, Algebraic ):
+	"""A sequence of hunks"""
 
 	def __init__( self, left_path, right_path ):
 		self.hunks = []
@@ -1029,6 +1072,7 @@ def _range_cmp( start, stop, needle ):
 		return 0
 
 class Hunk( Enumerable, UIObject, Algebraic ):
+	"""A description of how a contiguous sequence of lines should be edited"""
 
 	def __init__( self, left_start_line_num, right_start_line_num ):
 		self.lstart = left_start_line_num
@@ -1254,15 +1298,18 @@ def _patch_from( name, diff_content ):
 patches = Stack("patches")
 
 def load( filename ):
+	"""Create a Patch object based on the contents of the given file"""
 	return _patch_from( filename, open( filename ).readlines() )
 
 def push( patch ):
+	"""Add a new patch to the top of the stack.  Takes a Patch object or a filename."""
 	if isinstance( patch, Patch ):
 		return patches.push( patch )
 	else:
 		return patches.push( load( patch ) )
 
 def pop():
+	"""Remove and return the top patch on the stack"""
 	return patches.pop()
 
 class TestError:
