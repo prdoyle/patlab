@@ -16,6 +16,7 @@ import subprocess
 from tempfile import mkstemp
 import os
 import optparse # Python <2.7 doesn't have argparse
+from zipfile import ZipFile, BadZipfile, ZIP_DEFLATED
 
 def debug( tag, *args ):
 	if True: #not tag in [ "HWC" ]:
@@ -479,6 +480,17 @@ class Stack( Enumerable, UIObject ):
 		original = patches[ index ]
 		patches[ index:index+1 ] = self._edit2([ Patch( original.name + ".upper" ), original ])
 		return self
+
+	def zip( self, filename ):
+		try:
+			z = ZipFile( filename, "w", ZIP_DEFLATED )
+		except RuntimeError:
+			z = ZipFile( filename, "w" )
+		try:
+			for patch in reversed( self.patches ):
+				z.writestr( patch.name, patch.contents() )
+		finally:
+			z.close()
 
 	def write_contents_to( self, file ):
 		for patch in self.patches:
@@ -1340,7 +1352,15 @@ def main():
 	( args, patch_files ) = argp.parse_args()
 	if len( patch_files ) >= 1:
 		for patch in patch_files:
-			push( patch )
+			try:
+				z = ZipFile( patch, "r" )
+				try:
+					for name in z.namelist():
+						push( _patch_from( name, z.open( name, "r" ).readlines() ) )
+				finally:
+					z.close()
+			except BadZipfile:
+				push( patch )
 		if args.test:
 			# Testing that swapping adjacent patches has no overall effect
 			print "Testing:"
