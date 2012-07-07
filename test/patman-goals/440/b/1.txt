@@ -1,0 +1,4 @@
+Line A
+Line B
+Line C
+New last line for test6

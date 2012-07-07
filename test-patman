@@ -1,0 +1,392 @@
+#! /bin/bash
+
+#set -x
+set -e
+
+GOALS="$PWD/test/patman-goals"      # Ideal output from tests to compare agains; don't change this unless you change the verify_dir_contents() function too
+CODE="$PWD/test/patman-code"        # Original copies of "source code"
+SANDBOX="$PWD/test/patman-sandbox"  # Source code whose changes are being tracked by patman
+WORK="$PWD/test/patman-work"        # A place to put arbitrary files that will get deleted when we run "clean"
+
+export PATH=.:$PATH # Find the development copy of patman
+
+function die(){
+	echo $* 1>&2
+	exit 1
+}
+
+function clean_up(){
+	# I can't bring myself to do an rm -rf on a bunch of shell variables,
+	# so instead I just mv them, which will at least give me one chance to
+	# recover from a moment's stupidity.
+	rm -rf .graveyard
+	mkdir .graveyard
+	mv $PATMAN_PATCHFILE_DIR $PATMAN_REPOSITORY $WORK $SANDBOX .graveyard/ 2>/dev/null || true
+}
+
+function start_fresh(){
+	clean_up
+	mkdir  $PATMAN_PATCHFILE_DIR $PATMAN_REPOSITORY $WORK
+	cp -a $CODE $SANDBOX
+	patman init
+}
+
+function verify_fail(){
+	COMMAND="$*"
+	if { $COMMAND ; }; then
+		die "Command should fail but didn't: $COMMAND"
+	fi
+}
+
+function normalize_patch(){
+	# diff produces things like timestamps that we don't care about, so strip them out
+	awk 'NR>2 {print}'
+}
+
+function verify_text(){
+	IDEAL=$GOALS/$1
+	if [[ "$MODE" == "record" ]]; then
+		cat > $IDEAL
+	else
+		diff -u $IDEAL - || die "*** FAILED $1"
+	fi
+	echo $1 ok
+}
+
+function verify_file_contents(){
+	cat $2 | verify_text $1
+}
+
+function verify_dir_listing(){
+	cd $2
+	#find . | sort | verify_text $1
+	ls -dl `find .` | awk 'BEGIN{FS="[+ ]+"}; {print substr($1,0,4), $9}' | verify_text $1
+	cd - > /dev/null
+}
+
+function verify_dir_contents(){
+	verify_dir_listing "$1L" $2
+	IDEAL="test/patman-goals/$1" # We don't use too many variables here, such as $GOALS, because if we get this wrong, we could rm -rf the wrong thing!
+	ACTUAL=$2
+	[ -d "$ACTUAL" ] || die "No such directory $ACTUAL"
+	if [[ "$MODE" == "record" ]]; then
+		rm -rf $IDEAL
+		cp -a $ACTUAL $IDEAL
+	else
+		[ -d "$IDEAL" ] || die "No such directory $IDEAL"
+		diff -ur $IDEAL $ACTUAL || die "*** FAILED $1"
+	fi
+	echo $1 ok
+}
+
+export PATMANRC="nonexistent file"
+export PATMAN_PATCHFILE_DIR="$PWD/test/patman-patches"
+export PATMAN_REPOSITORY="$PWD/test/patman-patman_repository"
+#PHONY_REPOSITORY="$PWD/test/patman-phony_repository"
+
+COMMAND=$1
+
+STDOUT="stdout.txt"
+STDERR="stderr.txt"
+
+case $COMMAND in
+	clean)
+	clean_up
+	rm -f $STDOUT $STDERR
+	rm -rf .prev-goals
+	exit $?
+	;;
+
+	record)
+	rm -rf .prev-goals
+	! [ -e goals ] || mv goals .prev-goals
+	mkdir goals
+	MODE="record"
+	;;
+
+	"");; # Just run the tests below
+	*) die "Unknown pmtest command: $COMMAND";;
+esac
+
+if {
+set -e
+##############
+
+#
+# IMPORTANT NOTE
+#
+# Please make sure "pmtest" gives a passing result before running "pmtest record" and/or modifying the tests
+
+##############
+
+start_fresh
+verify_dir_contents  101 $SANDBOX
+
+# Basic functionality
+
+patman begin test1
+patman add $SANDBOX/a/1.txt
+verify_dir_contents  102 $SANDBOX
+verify_file_contents 103 $PATMAN_REPOSITORY/info
+verify_file_contents 104 $PATMAN_REPOSITORY/revertible
+verify_file_contents 105 $PATMAN_REPOSITORY/stack
+ROOT=$(patman root) && echo ${ROOT#$PWD} | verify_text 111
+patman files | verify_text 112
+patman repository | verify_text 113
+
+echo "New last line" >> $SANDBOX/a/1.txt
+
+#patman diff | awk 'NR>3{print}' | verify_text 115
+
+patman diff > $WORK/2.patch
+verify_dir_listing   121 $WORK
+verify_dir_contents  122 $SANDBOX
+verify_file_contents 128 $PATMAN_REPOSITORY/revertible
+verify_file_contents 129 $PATMAN_REPOSITORY/stack
+
+patman pop
+verify_dir_listing   141 $PATMAN_PATCHFILE_DIR
+verify_dir_contents  142 $SANDBOX
+verify_dir_listing   143 $WORK
+patman files test1 | verify_text 145
+verify_file_contents 148 $PATMAN_REPOSITORY/revertible
+verify_file_contents 149 $PATMAN_REPOSITORY/stack
+
+
+##############
+
+start_fresh
+
+# Multiple patches
+
+patman begin test2
+patman add $SANDBOX/a/1.txt
+echo "Extra line for test2" >> $SANDBOX/a/1.txt
+verify_file_contents 214 $PATMAN_REPOSITORY/revertible
+verify_file_contents 215 $PATMAN_REPOSITORY/stack
+verify_dir_listing   216 $PATMAN_PATCHFILE_DIR
+
+patman begin test3
+patman add $SANDBOX/a/1.txt
+echo "Extra line for test3" >> $SANDBOX/a/1.txt
+verify_file_contents 224 $PATMAN_REPOSITORY/revertible
+verify_file_contents 225 $PATMAN_REPOSITORY/stack
+verify_dir_listing   226 $PATMAN_PATCHFILE_DIR
+
+patman pop
+verify_dir_contents  231 $SANDBOX
+verify_dir_listing   232 $PATMAN_PATCHFILE_DIR
+verify_file_contents 234 $PATMAN_REPOSITORY/revertible
+verify_file_contents 235 $PATMAN_REPOSITORY/stack
+
+patman pop
+verify_dir_contents  241 $SANDBOX
+verify_dir_listing   242 $PATMAN_PATCHFILE_DIR
+verify_file_contents 244 $PATMAN_REPOSITORY/revertible
+verify_file_contents 245 $PATMAN_REPOSITORY/stack
+
+patman push test2 test3
+verify_file_contents 246 $PATMAN_REPOSITORY/stack
+patman pop -a # pop all
+verify_file_contents 248 $PATMAN_REPOSITORY/stack
+verify_dir_contents  249 $SANDBOX
+
+patman push test2
+verify_dir_contents  251 $SANDBOX
+verify_file_contents 254 $PATMAN_REPOSITORY/revertible
+verify_file_contents 255 $PATMAN_REPOSITORY/stack
+
+patman push test3
+verify_dir_contents  261 $SANDBOX
+verify_file_contents 264 $PATMAN_REPOSITORY/revertible
+verify_file_contents 265 $PATMAN_REPOSITORY/stack
+
+# Doesn't work yet:
+#patman blame $SANDBOX/a/1.txt
+#verify_file_contents 266 $SANDBOX/a/1.txt
+#verify_file_contents 267 $SANDBOX/a/1.txt.blame
+
+patman pop -t test3 # preserve timestamps -- hmm, not sure how to test this exactly
+verify_dir_contents  271 $SANDBOX
+verify_file_contents 274 $PATMAN_REPOSITORY/revertible
+verify_file_contents 275 $PATMAN_REPOSITORY/stack
+
+patman pop test2
+verify_dir_contents  281 $SANDBOX
+verify_file_contents 284 $PATMAN_REPOSITORY/revertible
+verify_file_contents 285 $PATMAN_REPOSITORY/stack
+
+patman push test2 test3
+verify_dir_contents  291 $SANDBOX
+verify_file_contents 294 $PATMAN_REPOSITORY/revertible
+verify_file_contents 295 $PATMAN_REPOSITORY/stack
+
+verify_fail patman pop bogus
+rm $PATMAN_PATCHFILE_DIR/test3.patch
+patman pop test2
+verify_dir_listing   296 $PATMAN_PATCHFILE_DIR
+verify_dir_contents  297 $SANDBOX
+verify_file_contents 298 $PATMAN_REPOSITORY/revertible
+verify_file_contents 299 $PATMAN_REPOSITORY/stack
+
+# Revert
+
+{ verify_fail patman push test3        ;} | verify_text 300 # test3 can't be applied without test2
+{ verify_fail patman patches           ;} | verify_text 302 # There should be an incomplete patch
+{ verify_fail patman pop               ;} | verify_text 304 # Can't pop an incomplete patch
+{ verify_fail patman pop -a            ;} | verify_text 305 # Can't pop an incomplete patch
+{ verify_fail patman revert wrong.name ;} | verify_text 306 # Can't revert with the wrong name
+patman revert test3
+verify_dir_contents 308 $SANDBOX
+
+patman push test2
+{ verify_fail patman revert test2 ;} | verify_text 310 # Can't revert a completed patch
+verify_dir_contents 312 $SANDBOX
+
+patman pop
+verify_dir_contents 320 $SANDBOX
+
+# Pushing a patch from the wrong place
+
+cd code
+{ verify_fail patman push test2 ;} | verify_text 325
+patman revert test2
+cd - > /dev/null
+verify_dir_contents  326 $SANDBOX
+verify_file_contents 327 $PATMAN_REPOSITORY/revertible
+verify_file_contents 328 $PATMAN_REPOSITORY/stack
+
+# Stipulate
+
+{ verify_fail patman push test3  ;} | verify_text 330
+patman stipulate test3
+verify_dir_contents 332 $SANDBOX
+
+##############
+
+start_fresh
+
+patman begin test4
+patman add $SANDBOX/a/1.txt
+echo "New last line for test4" >> $SANDBOX/a/1.txt
+patman save
+
+patman begin test5
+patman add $SANDBOX/a/1.txt
+echo "New last line for test5" >> $SANDBOX/a/1.txt
+
+verify_dir_contents  400 $SANDBOX
+verify_file_contents 401 $PATMAN_REPOSITORY/stack
+verify_file_contents 402 $PATMAN_REPOSITORY/revertible
+
+{ verify_fail patman forget test5 ;}
+
+patman forget test4
+verify_dir_contents  420 $SANDBOX
+verify_file_contents 421 $PATMAN_REPOSITORY/stack
+verify_file_contents 422 $PATMAN_REPOSITORY/revertible
+
+patman forget test5
+verify_dir_contents  430 $SANDBOX
+verify_file_contents 431 $PATMAN_REPOSITORY/stack
+verify_file_contents 432 $PATMAN_REPOSITORY/revertible
+
+normalize_patch < $PATMAN_PATCHFILE_DIR/test4.patch | verify_text 438
+verify_file_contents 439 $PATMAN_PATCHFILE_DIR/test5.patch
+
+##############
+
+start_fresh
+
+patman begin test6
+patman add $SANDBOX/a/1.txt
+echo "New last line for test6" >> $SANDBOX/a/1.txt
+patman add $SANDBOX/b/1.txt
+echo "New last line for test6" >> $SANDBOX/b/1.txt
+verify_dir_contents  440 $SANDBOX
+
+patman begin test7
+patman add $SANDBOX/a/1.txt
+echo "New last line for test7" >> $SANDBOX/a/1.txt
+patman add $SANDBOX/a/2.txt
+echo "New last line for test7" >> $SANDBOX/a/2.txt
+patman add $SANDBOX/b/1.txt
+echo "New last line for test7" >> $SANDBOX/b/1.txt
+patman add $SANDBOX/b/2.txt
+echo "New last line for test7" >> $SANDBOX/b/2.txt
+verify_dir_contents  450 $SANDBOX
+
+patman pop
+verify_dir_contents  460 $SANDBOX
+verify_file_contents 462 $PATMAN_REPOSITORY/stack
+verify_file_contents 464 $PATMAN_REPOSITORY/revertible
+
+patman apply test7
+verify_dir_contents  470 $SANDBOX
+verify_file_contents 472 $PATMAN_REPOSITORY/stack
+verify_file_contents 474 $PATMAN_REPOSITORY/revertible
+
+patman pop
+verify_dir_contents  480 $SANDBOX
+patman push test6
+verify_dir_contents  485 $SANDBOX
+
+
+##############
+
+start_fresh
+
+# Custom diff formats
+
+patman begin test7
+patman add $SANDBOX/a/1.txt
+head -2 $SANDBOX/a/1.txt > $WORK/1.txt
+echo "New line 3" >> $WORK/1.txt 
+mv $WORK/1.txt $SANDBOX/a/1.txt
+patman diff | normalize_patch | verify_text 501
+patman diff -u | normalize_patch | verify_text 502
+patman diff -y | verify_text 503
+
+# Don't re-push patches that are already on the stack
+
+patman push test7
+patman patches    | verify_text 512
+verify_dir_contents             514 $SANDBOX
+
+patman begin test8
+patman add $SANDBOX/a/2.txt
+echo "New last line for test8" >> $SANDBOX/a/2.txt
+verify_dir_contents             520 $SANDBOX
+patman patches    | verify_text 521
+patman push test7
+patman patches    | verify_text 522
+verify_dir_contents             524 $SANDBOX
+patman push test8
+patman patches    | verify_text 526
+verify_dir_contents             528 $SANDBOX
+
+patman pop test8
+patman patches    | verify_text 530
+patman push test7 test8
+patman patches    | verify_text 532
+verify_dir_contents             534 $SANDBOX
+
+##############
+
+#start_fresh
+#
+## Wrong repository  -- DOESN'T WORK YET
+#
+#patman begin right_repository
+#OLD_REPOSITORY=$PATMAN_REPOSITORY
+#export PATMAN_REPOSITORY="$PWD/phony_repository"
+#patman init
+#{ verify_fail patman begin wrong_repository ;}
+
+}; then   #2> $STDERR | tee $STDOUT #&& verify_text 9999 < $STDOUT
+	echo "All tests passed"
+else
+	echo "SOME TESTS FAILED"
+	exit 1
+fi
+
