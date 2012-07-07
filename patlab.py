@@ -362,7 +362,7 @@ class Stack( Enumerable, UIObject ):
 			[ index ] = index
 			return self.sink( index-1 )
 
-	def merge( self, index ):
+	def squash( self, index ):
 		self.patches[ index:index+2 ] = [ self.patches[ index+1 ] + self.patches[ index ] ]
 		return self
 
