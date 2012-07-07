@@ -126,9 +126,9 @@ Patch stack commands:
 	revive [-p] {STACK}
 		Push all patches in the given stack file.  Refuses to revive a stack file
 		if there are already patches on the stack, unless -p is present.
-	zip [{STACK}]
-		Pop all patches, then put them in a zip file called {STACK}.zip.  Default
-		is "patches.zip".)  Analogous to the shelve command.
+	zip {STACK}
+		Pop all patches, then put them in a zip file called {STACK}.zip.
+		Analogous to the shelve command.
 
 Maintenance commands:
 	init
@@ -803,15 +803,19 @@ function CMD_revive(){
 
 function CMD_zip(){
 	standard_variables
-	local ZIP_NAME="${1:-patches}"
-	local ZIP_FILE="$PATCHFILE_DIR/$1.zip"
+	local ZIP_NAME="$1"; shift
+	[ -n "$ZIP_NAME" ] || die "Specify the name for the zip file"
+	[ -z "$*" ]        || die "Specify just one name for the zip file"
+	local ZIP_FILE="$PATCHFILE_DIR/$ZIP_NAME.zip"
 	local PATCHES=`tac $STACK`
+	verbose "Zipping stack to $ZIP_FILE {"
 	CMD_pop -a
 	pushdq $PATCHFILE_DIR
 	for PATCH in $PATCHES; do
 		zip "$ZIP_FILE" "$PATCH$PATCHFILE_SUFFIX"
 	done
 	popdq
+	verbose "} done."
 }
 
 ###########################
