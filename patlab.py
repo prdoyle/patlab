@@ -19,7 +19,7 @@ import optparse # Python <2.7 doesn't have argparse
 from zipfile import ZipFile, BadZipfile, ZIP_DEFLATED
 
 def debug( tag, *args ):
-	if True: #not tag in [ "HWC" ]:
+	if True: #not tag in [ "parse" ]:
 		return
 	if len(args) >= 2:
 		string = args[0] % args[1:]
@@ -71,13 +71,9 @@ class IncompatibleChangeToSameLineError( ChangeToSameLineError ):
 	def __init__( self, left_hunk, right_hunk, left_line, right_line ):
 		ChangeToSameLineError.__init__( self, left_hunk, right_hunk, left_line, right_line )
 
-class IncompatibleFileRenameError( PatlabError ):
-	def __init__( self, left_diff, right_diff ):
-		self.left_diff = left_diff
-		self.right_diff = right_diff
-
-	def __repr__( self ):
-		return "IncompatibleChangeToSameLineError:\n   %s\n   %s" % ( repr(self.left_line), repr(self.right_line) )
+class IncompatibleFileRenameError( PatlabErrorWithMessage ):
+	def __init__( self, message ):
+		self.message = message
 
 class UIObject:
 	"""Handy display functionality"""
@@ -571,7 +567,7 @@ class Patch( Enumerable, UIObject, Algebraic ):
 						if skip_incompatible:
 							pass
 						else:	
-							raise IncompatibleFileRenameError( self, other )
+							raise IncompatibleFileRenameError( "Right patch %s has %s on right but not left" % ( other.headline(), name ) )
 					else:
 						result.diffs.extend( combine_func( self.diffs_by_rname[ name ], None ) )
 			else:
@@ -580,7 +576,7 @@ class Patch( Enumerable, UIObject, Algebraic ):
 					if skip_incompatible:
 						pass
 					else:
-						raise IncompatibleFileRenameError( self, other )
+						raise IncompatibleFileRenameError( "Left patch %s has %s on left but not right" % ( self.headline(), name ) )
 				else:
 					result.diffs.extend( combine_func( None, other.diffs_by_lname[ name ] ) )
 		return result.normalize()
@@ -1258,13 +1254,29 @@ def _line_from( string ):
 	content = string[ 1: ]
 	return Line( kind, content ).normalize()
 
+def _line_range_from( string ):
+	try:
+		( start, length ) = string.split(',')
+	except ValueError:
+		( start, length ) = ( string, 1 ) # Without a comma, default is one line
+	return ( abs(int( start )), int( length ) )
+
+def _fixup_zeros( lstart, rstart ):
+	# Sometimes diffs against empty files show up with bogus zeros for the starting line numbers
+	if lstart == 0:
+		assert( rstart == 1 )
+		lstart = rstart
+	elif rstart == 0:
+		assert( lstart == 1 )
+		rstart = lstart
+	return ( lstart, rstart )
+
 def _hunk_from( descriptor, line_content ):
 	debug( "parse", "_hunk_from( \"%s\" )", descriptor )
 	[ atat, left, right, atat2 ] = descriptor.split( None, 3 )
-	( lstart, llen ) = left.split(',')
-	( lstart, llen ) = ( -int(lstart), int(llen) )
-	( rstart, rlen ) = right.split(',')
-	( rstart, rlen ) = (  int(rstart), int(rlen) )
+	( lstart, llen ) = _line_range_from( left )
+	( rstart, rlen ) = _line_range_from( right )
+	( lstart, rstart ) = _fixup_zeros( lstart, rstart )
 	result = Hunk( lstart, rstart )
 	while not result._has_required_lines( llen, rlen ):
 		line = line_content[0]
@@ -1303,7 +1315,7 @@ def _patch_from( name, diff_content ):
 	result = Patch( name )
 	while diff_content:
 		left_descriptor = diff_content[0]
-		if args.junk_between_diffs and ( left_descriptor[ 0:3 ] != "---" ):
+		if args.junk_between_diffs and ( left_descriptor[ 0:4 ] != "--- " ):
 			diff_content = diff_content[ 1: ]
 		else:
 			right_descriptor = diff_content[1]
