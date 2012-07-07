@@ -7,7 +7,7 @@ set -e # I'd like to use -E too but it's not available on older bashes
 # History:
 #
 # 0.6: (patlab compatibility)
-# * Add zip command
+# * Add zip and unzip commands
 # * Add common_options function, starting with -N (for touching nonexistent files) 20120628
 # * Add -l flag to "patches" command  - list file names of the patches 20120611
 #
@@ -129,6 +129,10 @@ Patch stack commands:
 	zip {STACK}
 		Pop all patches, then put them in a zip file called {STACK}.zip.
 		Analogous to the shelve command.
+	unzip [-p] {STACK}
+		Unzip {STACK}.zip in the patchfile directory, then push all the patches
+		it contains.  Refuses to push if there are already patches on the stack,
+		unless -p is present.  Analogous to the revive command.
 
 Maintenance commands:
 	init
@@ -283,6 +287,10 @@ function files_in_active_patch(){
 
 function files_in_patchfile(){
 	cat $* | grep '^---.*[^-]$' | cut -d/ -f$((PATH_STRIP+1))- | cut -f1
+}
+
+function files_in_zipfile(){
+	unzip -l "$1" '*.patch' | awk 'BEGIN{ printing=0 } /^--------/{ printing=1-printing } /^[^-]/ { if(printing) print $4 }'
 }
 
 function create_temp_file(){
@@ -818,6 +826,30 @@ function CMD_zip(){
 	verbose "} done."
 }
 
+function CMD_unzip(){
+	OPTIND=0
+	while getopts "p" Option; do case $Option in
+		p) PARTIAL=1;; # revive on top of other patches
+	esac done
+	shift $(($OPTIND - 1))
+	[ ! -s "$STACK" ] || [ -n "$PARTIAL" ] || die "Stack is not empty; use -p to unzip on top of other patches"
+
+	local ZIP_NAME="$1"; shift
+	[ -n "$ZIP_NAME" ] || die "Specify the name for the zip file"
+	[ -z "$*" ]        || die "Specify just one name for the zip file"
+	local ZIP_FILE="$PATCHFILE_DIR/$ZIP_NAME.zip"
+
+	local PATCHES=$(files_in_zipfile "$ZIP_FILE")
+	verbose "Unzipping stack from $ZIP_FILE {"
+	pushdq $PATCHFILE_DIR
+	unzip $ZIP_FILE
+	popdq
+	for PATCH in $PATCHES; do
+		CMD_push ${PATCH%.patch}
+	done
+	verbose "} done."
+}
+
 ###########################
 ##
 ##  Main logic
@@ -866,6 +898,7 @@ case $COMMAND in
 	shelve)      CMD_shelve      $*;;
 	stipulate)   CMD_stipulate   $*;;
 	top)         CMD_top         $*;;
+	unzip)       CMD_unzip       $*;;
 	zip)         CMD_zip         $*;;
 
 
