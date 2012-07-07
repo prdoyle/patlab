@@ -8,13 +8,14 @@
 # If you have approximate patches, you probably want to clean them up with
 # patman or the diff/patch commands before fiddling with them in patlab.
 
-from sys import stdin, stdout, stderr, argv
+from sys import stdin, stdout, stderr
 import cStringIO
 import re
 import fnmatch
 import subprocess
 from tempfile import mkstemp
 import os
+import optparse # Python <2.7 doesn't have argparse
 
 def debug( tag, *args ):
 	if True: #not tag in [ "HWC" ]:
@@ -1281,17 +1282,14 @@ def _check_empty( patch, message, *args ):
 		stdout.flush()
 
 def main():
-	global argv
-	if len( argv ) >= 2:
-		argv = argv[1:] # Remove program name
-		if argv[0] == "-t":
-			test_mode = True
-			argv = argv[1:]
-		else:
-			test_mode = False
-		for patch in argv[0:]:
+	argp = optparse.OptionParser()
+	argp.add_option( "-t", "--test", action="store_true",    help="Perform consistency using on the given patches" )
+	#argp.add_option( "patches", metavar="patch", nargs="*",  help="Names of patch files to load" ) # This is an argparse thing
+	( args, patch_files ) = argp.parse_args()
+	if len( patch_files ) >= 1:
+		for patch in patch_files:
 			push( patch )
-		if test_mode:
+		if args.test:
 			# Testing that swapping adjacent patches has no overall effect
 			print "Testing:"
 			print "  Compatibility: ",
