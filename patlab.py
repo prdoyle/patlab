@@ -1246,7 +1246,7 @@ def _line_from( string ):
 
 def _hunk_from( descriptor, line_content ):
 	debug( "parse", "_hunk_from( \"%s\" )", descriptor )
-	[ atat, left, right, atat2 ] = descriptor.split()
+	[ atat, left, right, atat2 ] = descriptor.split( None, 3 )
 	( lstart, llen ) = left.split(',')
 	( lstart, llen ) = ( -int(lstart), int(llen) )
 	( rstart, rlen ) = right.split(',')
@@ -1272,7 +1272,7 @@ def _diff_from( left_descriptor, right_descriptor, hunk_content ):
 	[ left_prefix,  lpath ] = left_descriptor.split( None, 2 )[ 0:2 ]
 	[ right_prefix, rpath ] = right_descriptor.split( None, 2 )[ 0:2 ]
 	if left_prefix != "---":
-		raise ParseError( "Expected ---; found %s" % left_descriptor )
+		raise ParseError( "Expected ---; found %s\nHINT: Consider using --junk-between-patches" % left_descriptor )
 	if right_prefix != "+++":
 		raise ParseError( "Expected +++; found %s" % right_descriptor )
 	result = Diff( lpath, rpath )
@@ -1288,11 +1288,14 @@ def _diff_from( left_descriptor, right_descriptor, hunk_content ):
 def _patch_from( name, diff_content ):
 	result = Patch( name )
 	while diff_content:
-		left_descriptor  = diff_content[0]
-		right_descriptor = diff_content[1]
-		diff = _diff_from( left_descriptor, right_descriptor, diff_content[ 2: ] )
-		result.diffs.append( diff )
-		diff_content = diff_content[ diff.num_input_lines(): ]
+		left_descriptor = diff_content[0]
+		if args.junk_between_diffs and ( left_descriptor[ 0:3 ] != "---" ):
+			diff_content = diff_content[ 1: ]
+		else:
+			right_descriptor = diff_content[1]
+			diff = _diff_from( left_descriptor, right_descriptor, diff_content[ 2: ] )
+			result.diffs.append( diff )
+			diff_content = diff_content[ diff.num_input_lines(): ]
 	return result.normalize()
 
 patches = Stack("patches")
@@ -1329,8 +1332,10 @@ def _check_empty( patch, message, *args ):
 		stdout.flush()
 
 def main():
+	global args
 	argp = optparse.OptionParser()
-	argp.add_option( "-t", "--test", action="store_true",    help="Perform consistency using on the given patches" )
+	argp.add_option( "-t", "--test",               action="store_true",    help="Perform consistency using on the given patches" )
+	argp.add_option( "-j", "--junk-between-diffs", action="store_true",    help="Before each diff, skip any lines that don't start with ---" )
 	#argp.add_option( "patches", metavar="patch", nargs="*",  help="Names of patch files to load" ) # This is an argparse thing
 	( args, patch_files ) = argp.parse_args()
 	if len( patch_files ) >= 1:
