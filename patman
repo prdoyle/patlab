@@ -1,0 +1,852 @@
+#! /bin/bash
+
+# Patch manager   Patrick Doyle  1 Oct 2007
+#set -x
+set -e # I'd like to use -E too but it's not available on older bashes
+
+# History:
+#
+# 0.6:
+# * Add common_options function, starting with -N (for touching nonexistent files) 20120628
+# * Add -l flag to "patches" command  - list file names of the patches 20120611
+#
+# 0.5:
+# * Add -v flag to "patches" command (and alias "ls") - list files touched by the patch
+# * Ignore comments and blank lines in .stack files (though a 'patman capture' clobbers them)
+# * Change back from "pwd -P" to readlink so patman can work with symlinked root directories; use perl command if readlink is unavailable
+# * Check for empty arg lists 20110330
+# * Add archive command 20110330
+# * Go back to "u" format for diffs.  Nobody's using them but me, and "c" format is a pain.  20110315
+# * Add archive option to "forget" command  20110312
+# * Eat stderr from ex command.  On linux it was emitting a carriage return.  20100323
+# * Add -F to grep command for CMD_pop, and -x to most grep commands,  20090928
+# * Use "pwd -P" instead of readlink for portability on AIX 20090901
+# * Added capture, shelve, revive 20090727
+# * Implemented pop -a 20090706
+# * Fix bug in "apply" command when active patch contains no files 20090605
+# * Added annotation for forgotten patches
+# * Take diff options in "patman diff" command
+# * Help on stderr
+# * Don't use mktemp - not portable
+# * Use more portable diff -c format
+#
+# 0.4:
+# * Add "apply" command
+# * Rename "absorb" to "forget"
+# * Touch files by default after pop and revert.  -t option restores timestamps.
+
+MAJOR_VERSION=0
+MINOR_VERSION=6
+
+
+###########################
+##
+##  Basic infrastructure
+##
+
+INF=999999
+
+function die(){
+	echo $* 1>&2
+	exit 1
+}
+
+function internal_error(){
+	echo "INTERNAL ERROR: $*" 1>&2
+	exit 1
+}
+
+function verbose(){
+	echo "$*" 1>&2
+	#true
+}
+
+function debug(){
+	echo "$*" 1>&2
+	#true
+}
+
+function terse(){
+	#echo "$*" 1>&2
+	true
+}
+
+function version(){
+	echo "patman v$MAJOR_VERSION.$MINOR_VERSION  Patrick Doyle"
+}
+
+function help_message(){
+	version
+	cat <<END_OF_HELP
+Patch-specific commands:
+	begin {PATCH}
+		Start working on an (initially empty) patch called {PATCH} with
+		the current directory as its root.
+	add [-N] {FILE} ...
+		Add the given files to the active patch, and mark them writeable.
+	files [{PATCH} ...]
+		List the files in the active patch.  If {PATCH} is given, lists files in that patch file.
+	diff
+		Show the changes within the active patch on stdout.
+	save
+		Update the active patch to reflect the state of the sandbox.
+	push [-N] {PATCH}
+		Apply changes from {PATCH} and make it the active patch with
+		the current directory as its root.  If the patch doesn't apply
+		cleanly, it is considered "incomplete", and only the revert and
+		stipulate commands can be used.
+	pop [-a] [-t] [{PATCH}]
+		Save the active patch, then revert it.  If {PATCH} is present,
+		pop that patch and everything above it.  If -t is present,
+		restore file timestamps.  If -a is present, pop all patches
+		on the stack.  "pop" is equivalent to "save" followed by "revert".   
+	top
+		Display the name of the active patch.
+	root
+		Display the root directory of the active patch.
+	apply [-N] {PATCH}
+		Modify the files according to the contents of {PATCH}, adding
+		the affected files to the active patch.
+		Differs from "push" because {PATCH} does not become the active
+		patch; rather, its changes are assimilated into the active
+		patch.  (It's almost like "push PATCH" is equivalent to
+		"begin PATCH" followed by "apply PATCH" except that the "begin"
+		command fails if the patch already exists.)
+
+Patch stack commands:
+	patches
+		Display the current patch stack.  Incomplete patches are preceeded by "+".
+		-v ("verbose") displays more information, including the list of files in
+		each patch.  Alias is "ls".
+	capture {STACK}
+		Save the current stacked patch names to the given stack file.
+	shelve {STACK}
+		Equivalent to "capture {STACK}" followed by "pop -a".
+	revive [-p] {STACK}
+		Push all patches in the given stack file.  Refuses to revive a stack file
+		if there are already patches on the stack, unless -p is present.
+
+Maintenance commands:
+	init
+		Initialize the repository.
+	repository
+		Display the directory containing the patman repository.
+	config
+		Give a summary of the configuration patman is currently using.
+	revert [-c -t] {PATCH}
+		Restore the patch's files to their state when the patch was
+		activated.  Works on incomplete patches; to revert a complete
+		patch, the -c flag must be given.  {PATCH} must match the name
+		of the active patch.  If -t is present, restore file timestamps.  
+	stipulate {PATCH}
+		Mark an incomlpete patch as being complete.  This is uaually
+		done after resolving rejected hunks from a failed push command.
+		{PATCH} must match the name of the active patch.
+	forget [-a] {PATCH}
+		Remove the oldest (bottom) patch from the stack.  Files
+		modified by the patch are left unchanged, as is the patch file.
+		The given PATCH name mush match the bottom patch on the stack.
+		If -a is present, the patch file will be archived.
+		This is generally used to remove old patches that are
+		considered correct and complete -- often those having been
+		checked into an upstream repository.
+	discard {PATCH}
+		Remove the top patch from the stack.  Files modified by the
+		patch are left unchanged, as is the patch file.
+		*DANGER* -- This command is usually not what you want because
+		it loses all record of what was changed by the top patch;
+		however, it may be useful to recover from earlier errors.
+	archive {PATCH}
+		Move a patch file into the archive/ subdirectory of the
+		patchfile directory.  Since this command has no effect on any
+		patches on the stack, it can be run even when the top patch is
+		incomplete.
+
+	Here is a summary of the top-patch manipulation commands:
+
+		discard	  S
+		revert	 FS
+		save	U
+		pop	UFS
+
+		U: update patch file
+		F: restore original files (add -t to restore timestamps)
+		S: remove patch from stack
+
+Common options:
+	-N
+		For files that don't exist, create new empty files.
+
+Environment variables:
+	PATMANRC
+		This file is sourced before any other action.  Can be used to
+		set other environment variables.  Defaults to \$HOME/.patmanrc
+	PATMAN_PATCHFILE_DIR
+		Directory in which patch files will be stored.
+	PATMAN_REPOSITORY
+		Location of patman's metadata.  Defaults to \$HOME/.patman
+
+END_OF_HELP
+	exit 1
+}
+
+# Quiet versions of pushd and popd
+function pushdq(){ pushd $* > /dev/null; }
+function popdq(){ popd $* > /dev/null; }
+
+
+###########################
+##
+##  Helper functions
+##
+
+function get_absolute_path(){
+	local VAR=$1
+	local WHAT=$2
+	if [[ "$WHAT" == "${WHAT#/}" ]]; then
+		eval $VAR="$PWD/$WHAT"
+	else
+		eval $VAR="$WHAT"
+	fi
+}
+
+function common_options(){
+	ALLOWED_OPTIONS="$1"; shift
+	TOUCH_NONEXISTENT_FILES="no"
+	while getopts "$ALLOWED_OPTIONS" Option; do case $Option in
+		N) TOUCH_NONEXISTENT_FILES="yes";; # Reminiscent of diff -N
+	esac done
+	NUM_COMMON_OPTIONS="$(($OPTIND - 1))"
+}
+
+function standard_variables(){ # Sets a bunch of variables pertaining to the top patch, or fails if there is no top patch
+	PATCH_NAME=`head -n1 $REVERTIBLE`
+	TOP_COMPLETED_PATCH_NAME=`head -n1 $STACK`
+	if [[ "$1" != "incomplete_is_ok" ]] && [[ "$PATCH_NAME" != "$TOP_COMPLETED_PATCH_NAME" ]]; then
+		die "There is an incomplete patch $PATCH_NAME on the stack.  Use the \"revert\" command to remove it."
+	fi
+	[ "$PATCH_NAME" != "" ] || die "No patches on stack"
+	get_absolute_path PATCH_DB "$REPOSITORY/$PATCH_NAME.d"
+	test -d $PATCH_DB || internal_error "Invalid patch database directory $PATCH_DB"
+	BEFORE_DIR="$PATCH_DB/before"
+	AFTER_DIR="$PATCH_DB/after"
+	if which readlink > /dev/null; then
+		# Don't depend on perl if we don't have to
+		PATCH_ROOT=`readlink $AFTER_DIR`
+	else
+		PATCH_ROOT=`perl -e "print readlink('$AFTER_DIR');"`
+	fi
+}
+
+function ensure_standard_variables(){
+	# This is intended to make sure we don't get very weird errors when the variables aren't defined
+	if [[ "$PATCH_NAME" == "" ]]; then
+		internal_error "Standard variables not defined"
+		#standard_variables
+	fi
+}
+
+function get_filename_from_root(){
+	ensure_standard_variables
+	local FILENAME
+	get_absolute_path FILENAME $2
+	local RESULT=${FILENAME##$PATCH_ROOT/}
+	[ "$RESULT" != "$FILENAME" ] || die "File $FILENAME is not under root $PATCH_ROOT"
+	eval $1=$RESULT
+}
+
+function get_full_patch_file_name_for(){
+	eval $1=$PATCHFILE_DIR/$2$PATCHFILE_SUFFIX
+}
+
+function get_full_patch_file_name(){
+	ensure_standard_variables
+	get_full_patch_file_name_for $1 $PATCH_NAME
+}
+
+function files_in_active_patch(){
+	( # TODO: I don't remember why this is in its own shell -- could this be avoided by using "local" variables?
+	ensure_standard_variables
+	CHECK=`ls $BEFORE_DIR/ | head -1` # find doesn't like being given an empty list of places to search
+	if [[ "$CHECK" != "" ]]; then
+		pushdq $BEFORE_DIR
+		find * -type f
+		popdq
+	fi
+	)
+}
+
+function files_in_patchfile(){
+	cat $* | grep '^---.*[^-]$' | cut -d/ -f$((PATH_STRIP+1))- | cut -f1
+}
+
+function create_temp_file(){
+	local PREFIX=${1:-temp}
+	#mktemp "$PATCH_DB/$PREFIX-XXXXXXXXXX"
+	local FILE_NAME="$PATCH_DB/$PREFIX-$$-$RANDOM"
+	echo "" > $FILE_NAME
+	echo $FILE_NAME
+}
+
+function diff_files_in_active_patch(){ # Output is on fd #3
+	ensure_standard_variables
+	local DIFF_OPTS=${*:--u}
+	pushdq $PATCH_DB # Doing the diff from here makes the filenames suitable for -p1
+	for FILE in `files_in_active_patch`; do
+		verbose "diff of $FILE"
+		diff $EXTRA_DIFF_OPTS $DIFF_OPTS before/$FILE after/$FILE 1>&3 || if [[ $? != 1 ]]; then die; fi
+	done
+	popdq
+}
+
+function save_top_patch_file(){
+	local VERB=${1:-Making}
+	ensure_standard_variables
+	get_full_patch_file_name TARGET
+	local TEMP=`create_temp_file patch`
+	diff_files_in_active_patch 3> $TEMP
+	mv $TEMP $TARGET # We do this last so we don't kill $TARGET if there's an error
+}
+
+# These "ex" commands aren't great.  They return a spurious error code on some
+# systems, and on linux it seems to dump a carriage-return to stderr.  I'd like
+# to find an alternative to edit a file in-place.
+function remove_first_line(){ echo -e '1d\nwq' | ex $1 2> /dev/null || true; }
+function remove_last_line (){ echo -e '$d\nwq' | ex $1 2> /dev/null || true; }
+
+function prepend_line(){
+	local LINE="$1"
+	local FILE="$2"
+	local TEMP=`create_temp_file prepend`
+	cp -f $FILE $TEMP
+	echo -e "$LINE" | cat - $TEMP > $FILE
+	rm $TEMP
+}
+
+function chmod_files(){
+	ensure_standard_variables
+	for FILE in `files_in_active_patch`; do
+		chmod $* $AFTER_DIR/$FILE
+	done
+}
+
+function begin_patch(){
+	if [ -s $STACK ]; then # Save the active patch, then mark files from existing patch read-only
+		standard_variables
+		if [[ "$1" == "-s" ]]; then
+			save_top_patch_file
+			shift
+		fi
+		chmod_files "a-w"
+	fi
+	local PATCH_NAME=$1
+	local PATCH_DB="$REPOSITORY/$PATCH_NAME.d"
+	local PATCHFILE="$PATCHFILE_DIR/$PATCH_NAME$PATCHFILE_SUFFIX"
+	[[ "$PATCH_NAME" != "-" ]] || die "'-' is not a legal patch name; can't push a patch from stdin"
+	if [ -e $PATCHFILE ] && [[ "$2" != "ok_to_overwrite" ]]; then
+		die "Cannot begin $PATCH_NAME -- $PATCHFILE already exists"
+	fi
+	mkdir $PATCH_DB || die "Cannot create new patch-db $PATCH_DB"
+	mkdir $PATCH_DB/before
+	prepend_line $PATCH_NAME $REVERTIBLE
+	ln -s $PWD $PATCH_DB/after
+}
+
+function add_files_to_active_patch(){
+	ensure_standard_variables
+	for FILE; do
+		get_filename_from_root RELATIVE_NAME $FILE
+		local BACKUP="$BEFORE_DIR/$RELATIVE_NAME"
+		if [ -e "$BACKUP" ]; then die "$FILE has already been added"; fi
+		if [ ! -e "$FILE" ]; then
+			[[ "$TOUCH_NONEXISTENT_FILES" == "yes" ]] || dir "$FILE does not exist"
+			touch $FILE
+		fi
+		mkdir -p $(dirname $BACKUP)
+		cp -p $FILE $BACKUP
+		chmod +w $FILE
+		verbose "added $RELATIVE_NAME"
+	done
+}
+
+function restore_files_from_before(){
+	local TOUCH=$1
+	ensure_standard_variables incomplete_is_ok
+	for FILE in `files_in_active_patch`; do # TODO: This whole copying process should succeed or fail as a unit
+		mv -f $BEFORE_DIR/$FILE $PATCH_ROOT/$FILE
+		if [[ $TOUCH == "touch" ]]; then
+			touch $PATCH_ROOT/$FILE
+		fi
+		verbose "restored $FILE"
+	done
+}
+
+function delete_patch_db(){
+	# Rather than just deleting the patch database, this keeps a backup of the previously-deleted database
+	# TODO: Is there really a point in backing it up now that CMD_pop uses mv instead of cp?
+	ensure_standard_variables
+	for NAME; do
+		local BACKUP_DIR="$REPOSITORY/.backups/$NAME.d"
+		if [ -d "$BACKUP_DIR" ]; then
+			chmod -R +w $BACKUP_DIR/before # This lets us delete it without rm -rf despite read-only files in the before dir
+			rm -r $BACKUP_DIR
+		fi
+		get_absolute_path DB "$REPOSITORY/$NAME.d"
+		mv $DB $BACKUP_DIR
+	done
+}
+
+function remove_top_patch_db(){
+	# top patch must have already been removed from $STACK
+	remove_first_line $REVERTIBLE
+	delete_patch_db $PATCH_NAME
+	if [ -s $STACK ]; then # Mark files from newly-exposed patch writeable
+		standard_variables
+		chmod_files "+w"
+	fi
+}
+
+##  Inner loops of the various top-patch manipulation commands
+
+function discard_top_patch(){
+	ensure_standard_variables
+	verbose "Discarding $PATCH"
+	remove_first_line $STACK
+	remove_top_patch_db
+}
+
+# revert is more complex because it can operate on incomplete patches
+
+function save_top_patch(){
+	ensure_standard_variables
+	get_full_patch_file_name TARGET
+	verbose "Saving $PATCH to $TARGET {"
+	save_top_patch_file
+	verbose "} done."
+}
+
+function pop_top_patch(){
+	ensure_standard_variables
+	local TOUCH=${1:-"don't touch"}
+	get_full_patch_file_name TARGET
+	verbose "Popping $PATCH to $TARGET {"
+	save_top_patch_file
+	remove_first_line $STACK
+	restore_files_from_before $TOUCH
+	remove_top_patch_db
+	verbose "} done."
+}
+
+function apply_blame(){
+	awk '
+		{ FS=""; OFS="" }
+		/^[-][^-]/{ $1="-'$1'" }
+		/^[+][^+]/{ $1="+'$2'" }
+		{ print }'
+}
+
+
+###########################
+##
+##  Command implementations
+##
+
+function CMD_add(){
+	standard_variables
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
+	verbose "Adding files to $PATCH_NAME {"
+	add_files_to_active_patch $*
+	verbose "} done."
+	terse $PATCH_NAME
+}
+
+function CMD_begin(){
+	for NAME; do
+		begin_patch $NAME
+		PATCH_DB="$REPOSITORY/$NAME.d"
+		prepend_line $NAME $STACK
+	done
+	verbose "Active patch is now $NAME"
+	verbose "No files added yet"
+	terse $NAME
+}
+
+function CMD_forget(){
+	standard_variables # We don't actually need this, but it does some handy consistency checks
+	diff -q $STACK $REVERTIBLE || internal_error "Repository is in an inconsistent state"
+	local ARCHIVE=""
+	while getopts "a" option; do case $option in
+		a) archive=1;
+		   [ -d $archive_dir ] || die "archive dir does not exist: $archive_dir"
+		   shift;;
+	esac done
+	[ -n "$*" ] || die "Specify at least one patch to forget"
+	for NAME; do
+		local OLDEST=$(tail -1 $STACK)
+		[[ "$NAME" == "$OLDEST" ]] || die "Given patch name doesn't match oldest patch $OLDEST"
+		verbose "Forgetting $NAME {"
+		remove_last_line $STACK
+		remove_last_line $REVERTIBLE
+		delete_patch_db $NAME
+		local PATCH_FILE
+		get_full_patch_file_name_for PATCH_FILE $NAME
+		echo "# patman $MAJOR_VERSION.$MINOR_VERSION f" >> $PATCH_FILE
+		if [ -n "$ARCHIVE" ]; then
+			verbose "  Archiving"
+			mv $PATCH_FILE $ARCHIVE_DIR
+		fi
+		verbose "} done."
+	done
+	terse $(tail -1 $STACK)
+}
+
+function CMD_archive(){
+	[ -n "$*" ] || die "Specify at least one patch to archive"
+	for NAME; do
+		if grep -qFx $NAME $STACK; then
+			die "$NAME is on the stack - cannot archive"
+		else
+			local PATCH_FILE
+			get_full_patch_file_name_for PATCH_FILE $NAME
+			verbose "Moving $PATCH_FILE into $ARCHIVE_DIR"
+			mv $PATCH_FILE $ARCHIVE_DIR
+		fi
+	done
+}
+
+function CMD_diff(){
+	standard_variables
+	diff_files_in_active_patch $* 3>&1
+}
+
+function CMD_discard(){
+	[ -n "$*" ] || die "Specify at least one patch to discard"
+	for NAME; do
+		standard_variables
+		if [[ "$NAME" == "$PATCH_NAME" ]]; then
+			discard_top_patch
+		else
+			die "Given patch name doesn't match top patch $PATCH_NAME"
+		fi
+	done
+	terse $(head -n1 $STACK)
+}
+
+function CMD_exec(){
+	standard_variables
+	pushdq $PATCH_ROOT
+	find $(files_in_active_patch) -exec $* \;
+	popdq
+}
+
+function CMD_files(){
+	if [[ "$*" == "" ]]; then
+		standard_variables
+		files_in_active_patch
+	else
+		for NAME; do files_in_patchfile $PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX; done # TODO: Expand the patch name into a patchfile path.  Come to think of it, I should make a handy function for this.
+	fi
+}
+
+function CMD_init(){
+	if [ -e "$STACK" ]; then
+		die "Stack file $STACK already exists"
+	fi
+	mkdir -p $REPOSITORY/.backups
+	echo -n > $REVERTIBLE
+	echo -n > $STACK
+	echo -e "MAJOR_VERSION=$MAJOR_VERSION\nMINOR_VERSION=$MINOR_VERSION" > $REPOSITORY/info
+	verbose "Initialized patch repository in $REPOSITORY"
+	terse $REPOSITORY
+}
+
+function CMD_patches(){
+	local VERBOSE="no"
+	local FULL_FILE_NAMES="no"
+	while getopts "vl" Option; do case $Option in
+		v) VERBOSE="yes";;
+		l) FULL_FILE_NAMES="yes";; # Meant to be reminiscent of grep -l
+	esac done
+	shift $(($OPTIND - 1))
+	if diff -q $REVERTIBLE $STACK >/dev/null; then
+		# Note that this is not formatted like the diff output, but the caller can tell by looking at the exit status of the patman command
+		for PATCH in `cat $STACK`; do
+			if [[ "$FULL_FILE_NAMES" == "yes" ]]; then
+				get_full_patch_file_name_for PATCH_FILE $PATCH
+				echo "$PATCH_FILE"
+			else
+				echo "$PATCH"
+			fi
+			if [[ "$VERBOSE" == "yes" ]]; then
+				files_in_patchfile $PATCHFILE_DIR/$PATCH$PATCHFILE_SUFFIX | awk '{printf "   %s\n",$1}'
+			fi
+		done
+	else
+		diff -U$INF $STACK $REVERTIBLE | awk 'NR>3 { print }'
+		return 1
+	fi
+}
+
+function CMD_top(){
+	standard_variables # For error checking
+	head -n1 $REVERTIBLE
+}
+
+function CMD_pop(){
+	local TOUCH="touch"
+	local POP_ALL="no"
+	while getopts "at" Option; do case $Option in
+		a) POP_ALL="yes";;
+		t) TOUCH="don't touch";;
+	esac done
+	shift $(($OPTIND - 1))
+	if [[ "$*" == "" ]]; then
+		standard_variables # Redundant for POP_ALL, but we do it for additional error checking
+		if [[ "$POP_ALL" == "yes" ]]; then
+			for PATCH in `cat $STACK`; do
+				standard_variables
+				pop_top_patch $TOUCH
+			done
+		else
+			pop_top_patch $TOUCH
+		fi
+	else
+		[[ "$POP_ALL" != "yes" ]] || die "-a option is incompatible with explicit patch names.  Use one or the other"
+		for NAME; do
+			standard_variables
+			PATCHES_TO_POP=`grep -B$INF -Fx $NAME $STACK` || die "No patch named $NAME on the stack"
+			for PATCH in $PATCHES_TO_POP; do
+				standard_variables
+				pop_top_patch $TOUCH
+			done
+		done
+		terse $(head -n1 $STACK)
+	fi
+}
+
+function CMD_push(){
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
+	[ -n "$*" ] || die "Specify at least one patch to push"
+	for NAME; do
+		if grep -qFx $NAME $STACK; then
+			verbose "$NAME is already on the stack"
+		else
+			PATCHFILE=$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX
+			[ -r "$PATCHFILE" ] || die "Can't find patch file $PATCHFILE"
+			verbose "Pushing patch $NAME from file $PATCHFILE {"
+			begin_patch $NAME ok_to_overwrite # Note: after this, we're sitting in the new patch's root dir by definition
+			standard_variables incomplete_is_ok
+			add_files_to_active_patch $(files_in_patchfile $PATCHFILE)
+			patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Use the \"stipulate\" or \"revert\" command before proceeding."
+			chmod_files "+w"
+			prepend_line $NAME $STACK
+			verbose "} done."
+		fi
+	done
+	terse $(head -n1 $STACK)
+}
+
+function CMD_apply(){
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
+	[ -n "$*" ] || die "Specify at least one patch to apply"
+	standard_variables
+	for NAME; do
+		PATCHFILE=$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX
+		[ -r "$PATCHFILE" ] || die "Can't find patch file $PATCHFILE"
+		verbose "Applying patch $NAME from file $PATCHFILE {"
+		add_files_to_active_patch $(files_in_patchfile $PATCHFILE | grep -vFx "`files_in_active_patch;echo`") # echo adds blank line so the grep command succeeds even if active patch has no files
+		patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Use the \"stipulate\" or \"revert\" command before proceeding."
+		chmod_files "+w"
+		verbose "} done."
+	done
+	terse $(head -n1 $STACK)
+}
+
+function CMD_revert(){
+	standard_variables incomplete_is_ok
+	local COMPLETE=""
+	local TOUCH="touch"
+	while getopts "ct" Option; do case $Option in
+		c) COMPLETE=1;;
+		t) TOUCH="don't touch";;
+	esac done
+	shift $(($OPTIND - 1))
+	[ -n "$*" ] || die "Specify at least one patch to revert"
+	for NAME; do
+		if [[ "$NAME" == "$PATCH_NAME" ]]; then
+			if [[ "$PATCH_NAME" == $TOP_COMPLETED_PATCH_NAME ]]; then
+				[ -n "$COMPLETE" ] || die "No incomplete patches on stack; use pop or revert -c instead" 
+				remove_first_line $STACK
+			fi
+			# Patch is guaranteed incomplete at this point
+			verbose "Reverting patch $PATCH_NAME {"
+			restore_files_from_before $TOUCH
+			remove_top_patch_db
+			verbose "} done."
+		else
+			die "Given patch name doesn't match top patch $PATCH_NAME"
+		fi
+	done
+	terse $(head -n1 $STACK)
+}
+
+function CMD_root(){
+	standard_variables incomplete_is_ok
+	echo $PATCH_ROOT
+}
+
+function CMD_repository(){
+	standard_variables incomplete_is_ok
+	echo $REPOSITORY
+}
+
+function CMD_save(){
+	standard_variables
+	save_top_patch
+	terse $PATCH_NAME
+}
+
+function CMD_config(){
+	echo "# Environment:"
+	env | sort | grep '^PATMAN' || true
+	echo "# Settings in effect:"
+	echo "PATCHFILE_DIR=$PATCHFILE_DIR"
+	echo "PATCHFILE_SUFFIX=$PATCHFILE_SUFFIX"
+	echo "PATMANRC=$PATMANRC"
+	echo "PATH_STRIP=$PATH_STRIP"
+	echo "REPOSITORY=$REPOSITORY"
+}
+
+function CMD_stipulate(){
+	standard_variables incomplete_is_ok
+	[[ "$PATCH_NAME" != "$TOP_COMPLETED_PATCH_NAME" ]] || die "No incomplete patches on stack"
+	[[ "$1" == "$PATCH_NAME" ]] || die "Given patch name doesn't match top patch $PATCH_NAME"
+	cp $REVERTIBLE $STACK
+	chmod_files "+w"
+	verbose "All patches marked complete"
+	terse $(head -n1 $STACK)
+}
+
+function CMD_blame(){
+	die "blame command doesn't work yet"
+	standard_variables
+	set -x
+	local BLAME_DIR="$REPOSITORY/$PATCH_NAME.d/blame"
+	if [ -d "$BLAME_DIR" ]; then
+		rm -rf $BLAME_DIR
+	fi
+	mkdir "$BLAME_DIR"
+	for FILE_NAME; do
+		BLAME_NAME="$BLAME_DIR/$FILE_NAME"
+		mkdir -p $(dirname $BLAME_NAME)
+		local PREV_PATCH=""
+		local PREV_PREV_PATCH=""
+		local PATCHES=`tac $STACK`
+		for PATCH_NAME in `tac $STACK`; do
+			if [ -r "$REPOSITORY/$PATCH_NAME.d/before/$FILE_NAME" ]; then
+				if [ -z "$PREV_PATCH" ]; then
+					# This is the oldest version we have; start the blame file from it
+					cp "$REPOSITORY/$PATCH_NAME.d/before/$FILE_NAME" "$BLAME_NAME"
+				else
+					diff -u "$REPOSITORY/$PREV_PATCH.d/before/$FILE_NAME" "$REPOSITORY/$PATCH_NAME.d/before/$FILE_NAME" | apply_blame "$PREV_PREV_PATCH" "$PREV_PATCH" | patch "$BLAME_NAME"
+				fi
+				PREV_PREV_PATCH="$PREV_PATCH"
+				PREV_PATCH="$PATCH_NAME"
+			fi
+		done
+		if [ -n "PREV_PATCH" ]; then
+			diff -u "$REPOSITORY/$PREV_PATCH.d/before/$FILE_NAME" "$PATCH_ROOT/$FILE_NAME" | apply_blame "$PREV_PREV_PATCH" "$PREV_PATCH" | patch "$BLAME_NAME"
+		fi
+		mv -f "$BLAME_NAME" "$PATCH_ROOT/$FILE_NAME.blame"
+	done
+	set +x
+}
+
+function CMD_capture(){
+	standard_variables
+	local STACK_FILE="$PATCHFILE_DIR/$1.stack"
+	verbose "Capturing stack to $STACK_FILE {"
+	cat $STACK > $STACK_FILE
+	verbose "} done."
+}
+
+function CMD_shelve(){
+	CMD_capture $*
+	CMD_pop     -a
+}
+
+function CMD_revive(){
+	while getopts "p" Option; do case $Option in
+		p) PARTIAL=1;; # revive on top of other patches
+	esac done
+	shift $(($OPTIND - 1))
+	[ ! -s "$STACK" ] || [ -n "$PARTIAL" ] || die "Stack is not empty; use -p to revive on top of other patches"
+
+	local STACK_FILE="$PATCHFILE_DIR/$1.stack"
+	verbose "Reviving stack from $STACK_FILE {"
+	CMD_push `tac $PATCHFILE_DIR/$1.stack | grep '^[^# ]'`
+	verbose "} done."
+}
+
+
+###########################
+##
+##  Main logic
+##
+
+PATMANRC=${PATMANRC:-$HOME/.patmanrc}
+[ -r "$PATMANRC" ] && . "$PATMANRC"
+
+# Some basic variables for which you don't even need to call standard_variables
+PATH_STRIP=${PATMAN_PATH_STRIP:-1} # -p option to patch
+PATCHFILE_DIR=${PATMAN_PATCHFILE_DIR:-.} # This shouldn't be blank or weird things will happen
+ARCHIVE_DIR=$PATCHFILE_DIR/archive
+PATCHFILE_SUFFIX=${PATMAN_PATCHFILE_SUFFIX:-.patch}
+EXTRA_DIFF_OPTS=${PATMAN_EXTRA_DIFF_OPTS:-}
+REPOSITORY=${PATMAN_REPOSITORY:-$HOME/.patman}
+STACK="$REPOSITORY/stack"
+REVERTIBLE="$REPOSITORY/revertible" # Patches that can be reverted by copying the contents of the "before" dir over top of the "after" dir.  TODO: Implement reverting of partially-applied patches
+
+COMMAND=$1
+shift || help_message
+
+case $COMMAND in
+	add)         CMD_add         $*;;
+	apply)       CMD_apply       $*;;
+	archive)     CMD_archive     $*;;
+	begin)       CMD_begin       $*;;
+	blame)       CMD_blame       $*;;
+	capture)     CMD_capture     $*;;
+	complete)    CMD_complete    $*;;
+	config)      CMD_config      $*;;
+	diff)        CMD_diff        $*;;
+	discard)     CMD_discard     $*;;
+	exec)        CMD_exec        $*;;
+	files)       CMD_files       $*;;
+	forget)      CMD_forget      $*;;
+	init)        CMD_init        $*;;
+	ls)          CMD_patches     $*;;
+	patches)     CMD_patches     $*;;
+	pop)         CMD_pop         $*;;
+	push)        CMD_push        $*;;
+	repository)  CMD_repository  $*;;
+	revive)      CMD_revive      $*;;
+	revert)      CMD_revert      $*;;
+	root)        CMD_root        $*;;
+	save)        CMD_save        $*;;
+	shelve)      CMD_shelve      $*;;
+	stipulate)   CMD_stipulate   $*;;
+	top)         CMD_top         $*;;
+
+
+	version)   version      ;;
+	-v)        version      ;;
+	-version)  version      ;;
+	--version) version      ;;
+	*)         help_message ;;
+esac
+
+
