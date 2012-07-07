@@ -1347,9 +1347,9 @@ def _check_empty( patch, message, *args ):
 
 def main():
 	global args
-	argp = optparse.OptionParser()
+	argp = optparse.OptionParser(usage="usage: %prog [options] {patch | zip}...")
 	argp.add_option( "-t", "--test",               action="store_true",    help="Perform consistency using on the given patches" )
-	argp.add_option( "-j", "--junk-between-diffs", action="store_true",    help="Before each diff, skip any lines that don't start with ---" )
+	argp.add_option( "-j", "--junk-between-diffs", action="store_true",    help="Before each diff, skip any lines that don't begin with \"---\"" )
 	#argp.add_option( "patches", metavar="patch", nargs="*",  help="Names of patch files to load" ) # This is an argparse thing
 	( args, patch_files ) = argp.parse_args()
 	if len( patch_files ) >= 1:
