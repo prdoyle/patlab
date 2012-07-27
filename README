@@ -1,0 +1,2 @@
+test-patman currently isn't passing.
+test-patlab fails patlab-5 because it doesn't handle diffs that create/delete files (and I'm not sure it should).
