@@ -28,6 +28,7 @@ def debug( tag, *args ):
 	stderr.write( string + "\n" )
 
 path_strip_level = 1
+context_limit    = 3
 
 def _stripped_path( path ):
 	"""Performs path stripping like patch -p"""
@@ -65,7 +66,8 @@ class ChangeToSameLineError( PatlabError ):
 		self.right_line = right_line
 
 	def __repr__( self ):
-		return "%s:\n   %s\n   %s" % ( self.__class__.__name__, repr(self.left_line), repr(self.right_line) )
+		#return "%s:\n   %s\n   %s" % ( self.__class__.__name__, repr(self.left_line), repr(self.right_line) )
+		return "%s:\n   %s\n   %s\n   %s\n   %s" % ( self.__class__.__name__, repr(self.left_line), repr(self.right_line), repr(self.left_hunk), repr(self.right_hunk) )
 
 class IncompatibleChangeToSameLineError( ChangeToSameLineError ):
 	def __init__( self, left_hunk, right_hunk, left_line, right_line ):
@@ -264,15 +266,99 @@ class Hunks( Piecewise_Filter ):
 		return self.partition_elements( patch, lambda d: self.partition_diff(d), [ Patch( patch.name + ".matches" ), Patch( patch.name ) ] )
 
 	def partition_diff( self, diff ):
-		[ yes, no ] = self.partition_elements( diff, self.hunk_filter, [ Diff( diff.lpath, diff.rpath ), Diff( diff.lpath, diff.rpath ) ] )
+		[ yes, no ] = self.partition_elements( diff, self.hunk_filter, [ Diff( diff.rpath, diff.rpath ), Diff( diff.lpath, diff.rpath ) ] )
 		# Assuming here that "yes" goes on top of "no"; that is, no+yes == diff.
+		self._fix_line_numbers( yes, no )
+		return self.normalize([ yes, no ])
+
+	def _fix_line_numbers( self, yes, no ):
 		# Assuming "yes" goes on top of "no", then the left-line-numbers of no are ok,
 		# and the right-line-numbers of yes are ok.  But the "middle" line number domain
 		# will be all wrong because each patch is missing parts (which ended up in the
 		# other patch) that could adjust line numbers.
-		_fix_left_line_numbers ( no.hunks )
+		_fix_left_line_numbers( no.hunks )
 		_fix_right_line_numbers( yes.hunks )
-		return self.normalize([ yes, no ])
+
+def _unchanged( line ):
+	x = Line( ' ', line.content )
+	return [ x ]
+
+class Lines( Hunks ):
+	"""A filter working at the line granularity"""
+
+	def __init__( self, predicate ):
+		self.line_predicate = predicate
+
+	def partition_diff( self, diff ):
+		debug( "LPD", "Partition diff:\n%s", diff )
+		iter = _Diff_Line_Iterator( diff )
+		# We'll assume again that yes goes on top of no, so diff = no+yes
+		[ yes, no ] = [ Diff( diff.rpath, diff.rpath ), Diff( diff.lpath, diff.rpath ) ]
+		yes.hunks.append( Hunk( 1,1 ) )
+		no .hunks.append( Hunk( 1,1 ) )
+		yes_offset = 0
+		no_offset  = 0
+		while iter.more_to_go():
+			[ left, right ] = iter.top_pair()
+			[ n1, n2 ]      = iter.line_numbers()
+			debug( "LPD", "  Lines: %d | %d\n||%s||%s", n1, n2, left, right )
+			if right:
+				# We can rely on n2 here
+				yes_line_numbers = [ n2 - yes_offset, n2 ]
+				no_line_numbers  = [ n2 - yes_offset - no_offset, n2 - yes_offset ]
+				debug( "LPD", "    yes: %s  no: %s", yes_line_numbers, no_line_numbers )
+				if self.line_predicate( right ):
+					debug( "LPD", "    Match" )
+					yes._extend( "LPD", yes_line_numbers, iter.pop() )
+					if left:
+						no._extend( "LPD", no_line_numbers, _unchanged( left ) )
+						debug( "LPD", "      Added left line as context to the mismatch patch" )
+					else:
+						yes_offset += 1
+				else:
+					debug( "LPD", "    Mismatch" )
+					yes._extend( "LPD", yes_line_numbers, _unchanged( right ) )
+					no._extend( "LPD", no_line_numbers, iter.pop() )
+					if not left:
+						no_offset += 1
+			else:
+				# We can rely on n1 here
+				no_line_numbers = [ n1, n1 + no_offset ]
+				debug( "LPD", "    No right line; deletion goes only into mismatch patch at %s", no_line_numbers )
+				no._extend( "LPD", no_line_numbers, iter.pop() )
+				if not right:
+					no_offset -= 1
+		debug( "LPD", "  Hunks before normalization:\n%s%s", no, yes )
+		result = self.normalize([ yes, no ])
+		debug( "LPD", "  Hunks after normalization:\n%s%s", result[1], result[0] )
+		return result
+
+	def partition_hunk( self, hunk ):
+		debug( "partition_hunk", "Partition hunk:\n%s", hunk )
+		iter = _Hunk_Line_Iterator( hunk )
+		# We'll assume again that yes goes on top of no, so hunk = no+yes
+		[ yes, no ] = [ Hunk( hunk.lstart, hunk.rstart ), Hunk( hunk.lstart, hunk.rstart ) ]
+		while iter.more_to_go():
+			[ left, right ] = iter.top_pair()
+			debug( "partition_hunk", "  Lines:\n||%s||%s", left, right )
+			if right:
+				if self.line_predicate( right ):
+					debug( "partition_hunk", "    Match" )
+					yes.lines.extend( iter.pop() )
+					if left:
+						no.lines.append( Line( ' ', left.content ) )
+						debug( "partition_hunk", "      Added left line as context to the mismatch patch" )
+				else:
+					debug( "partition_hunk", "    Mismatch" )
+					yes.lines.append( Line( ' ', right.content ) )
+					no.lines.extend( iter.pop() )
+			else:
+				debug( "partition_hunk", "    No right line; deletion goes into mismatch patch" )
+				no.lines.extend( iter.pop() )
+		debug( "partition_hunk", "  Hunks before normalization:\n%s%s", no, yes )
+		result = self.normalize([ yes, no ])
+		debug( "partition_hunk", "  Hunks after normalization:\n%s%s", result[1], result[0] )
+		return result
 
 class Hunks_With_Lines( Hunks ):
 	"""A filter working at the hunk granularity using a line-based predicate"""
@@ -314,8 +400,8 @@ class Hunks_With_Conflicts( Hunks ):
 				# Everything worked.  trial_diff is uncontroversial.
 				debug( "HWC", "    Done removing conflicts" )
 				conflict_diff.normalize()
+				_fix_right_line_numbers( conflict_diff.hunks )
 				return [ conflict_diff, trial_diff ]
-				#return [ diff.compose( trial_diff.inverse() ), trial_diff ]
 			except ChangeToSameLineError, e:			
 				# At least one hunk causes a conflict in at least one operation.
 				# Remove it and try again.
@@ -379,7 +465,9 @@ class Stack( Enumerable, UIObject ):
 
 	def squash( self, index ):
 		"""Replace patches at index and index+1 a new patch composed from the original two"""
-		self.patches[ index:index+2 ] = [ self.patches[ index+1 ] + self.patches[ index ] ]
+		squashed = self.patches[ index+1 ] + self.patches[ index ]
+		squashed.name = self.patches[ index+1 ].name
+		self.patches[ index:index+2 ] = [ squashed ]
 		return self
 
 	def filter( self, index, filter ):
@@ -388,13 +476,25 @@ class Stack( Enumerable, UIObject ):
 		self.patches[ index:index+1 ] = [ matching.shrinkwrapped(), non_matching.shrinkwrapped() ]
 		return self
 
-	def grep( self, index, regex ):
+	def grep_hunks( self, index, regex ):
 		"""
 		Replace patch at index with two patches: index contains all hunks with at
 		least one line matching the given regex, and index+1 contains all the
 		non-matching hunks.
 		"""
 		return self.filter( index, Hunks_With_Lines( lambda l: re.search( regex, l.content ) ) )
+
+	def grep_lines( self, index, regex ):
+		"""
+		Replace patch at index with two patches: index contains all lines that insert
+		the search string, and index+1 contains all the other lines.
+		NOTE: Usually you want grep_hunks instead.
+		"""
+		return self.filter( index, Lines( lambda l: re.search( regex, l.content ) ) )
+
+	def grep( self, index, regex ):
+		"Alias for grep_hunks" # This is likely what people usually want.  grep_lines can really fragment the hunks into uselessly small pieces.
+		return self.grep_hunks( index, regex )
 
 	def glob( self, index, filename_pattern ):
 		"""
@@ -1141,7 +1241,7 @@ class Hunk( Enumerable, UIObject, Algebraic ):
 		while iter:
 			lines.extend( iter.pop() )
 		self.lines = lines
-		self._trim_context( 3 )
+		self._trim_context( context_limit )
 
 	def normalize( self ):
 		self._group_lines()
@@ -1229,7 +1329,7 @@ class Line( UIObject ):
 		if self.content[-1] == '\n':
 			file.write( "%s%s" % ( self.kind, self.content ) )
 		else:
-			file.write( "%s%s\n\\ No newline at end of file" % ( self.kind, self.content ) )
+			file.write( "%s%s\n\\ No newline at end of file\n" % ( self.kind, self.content ) )
 
 	def write_headline_to( self, file ):
 		file.write( "%s%s" % ( self.kind, self.content.rstrip() ) )
@@ -1425,13 +1525,17 @@ if 1:
 	main()
 
 if 0: # Debugging
+	patches.grep_lines(1, '[mM]utable')
+	#before = patches[0]
+	#patches.grep_lines(0, 'finishInitialization')
+	#after = patches[1] + patches[0]
 	#push( "change.patch" )
 	#push( "change-again.patch" )
 	#push( "first.patch" )
 	#push( "second.patch" )
-	p1 = patches[1]
-	p2 = patches[2]
-	p3 = patches[3]
+	#p1 = patches[1]
+	#p2 = patches[2]
+	#p3 = patches[3]
 	#d2 = p2[2]
 	#d3 = p3[19]
 	#rem = p3 % p2
