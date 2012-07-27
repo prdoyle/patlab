@@ -7,6 +7,7 @@ set -e # I'd like to use -E too but it's not available on older bashes
 # History:
 #
 # 0.6: (patlab compatibility)
+# * Add complete command
 # * Add zip and unzip commands
 # * Add common_options function, starting with -N (for touching nonexistent files) 20120628
 # * Add -l flag to "patches" command  - list file names of the patches 20120611
@@ -169,6 +170,11 @@ Maintenance commands:
 		patchfile directory.  Since this command has no effect on any
 		patches on the stack, it can be run even when the top patch is
 		incomplete.
+	patman complete {SHELL} {ARGS}
+		Perform command-line completion as needed by the given SHELL.
+		Currently only "bash" is supported.  To enable command line
+		completion for bash, use a completion function containing this:
+		  COMPREPLY=(\`patman complete bash \$COMP_CWORD \${COMP_WORDS[@]}\`)
 
 	Here is a summary of the top-patch manipulation commands:
 
@@ -848,6 +854,50 @@ function CMD_unzip(){
 		CMD_push ${PATCH%.patch}
 	done
 	verbose "} done."
+}
+
+function CMD_complete(){
+	local SHELL=$1; shift
+	[[ "$SHELL" == "bash" ]] || die "Only bash shell expansion is supported"
+
+	# Put this in your .bashrc :
+	#
+	# function complete_patman {
+        #	COMPREPLY=(`patman complete bash $COMP_CWORD ${COMP_WORDS[@]}`)
+	# }
+	# complete -F complete_patman patman
+
+	# Define a few variables to make this look like it's a bash completion function
+	local COMP_CWORD=$1; shift
+	local COMP_WORDS=($*)
+
+	local STACK_FILE_SUFFIX=".stack"
+	local COMMAND="${COMP_WORDS[1]}"
+	local WORD="${COMP_WORDS[$COMP_CWORD]}"
+
+	if [[ "$COMP_CWORD" == "1" ]]; then
+		compgen -W "add apply archive begin capture config diff discard exec files forget init patches pop push repository revert revive root save shelve stipulate version" -- $WORD
+	else
+		case "$COMMAND" in
+			add)
+				compgen -f $WORD;; # I wish I could get dir names to end with a / instead of a space; not sure how bash does that for "ls" et al
+			apply|files|push|archive)
+				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
+			capture|shelve|revive)
+				ls -d $PATCHFILE_DIR/$WORD*$STACK_FILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$STACK_FILE_SUFFIX\$@@" 2> /dev/null;;
+			pop)
+				grep "^$WORD" $STACK;; # Doesn't work if $WORD contains special regex characters
+			discard)
+				head -1 $STACK;;
+			revert|stipulate)
+				head -1 $REVERTIBLE;;
+			forget)
+				tail -1 $STACK;;
+
+			begin|config|diff|exec|init|patches|repository|root|save)
+				;;
+		esac
+	fi
 }
 
 ###########################
