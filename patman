@@ -296,7 +296,10 @@ function files_in_patchfile(){
 }
 
 function files_in_zipfile(){
-	unzip -l "$1" '*.patch' | awk 'BEGIN{ printing=0 } /^--------/{ printing=1-printing } /^[^-]/ { if(printing) print $4 }'
+	unzip -l "$1" '*.patch' | awk '
+		BEGIN  { printing=0 }
+		FNR==3 { stopAt=$1; printing=1 }
+		FNR!=3 { if($1==stopAt){ printing=0 } else if(printing){ print $4 }}'
 }
 
 function create_temp_file(){
@@ -880,7 +883,7 @@ function CMD_complete(){
 	else
 		case "$COMMAND" in
 			add)
-				compgen -f $WORD;; # I wish I could get dir names to end with a / instead of a space; not sure how bash does that for "ls" et al
+				compgen -o plusdirs -f $WORD;; # I wish I could get dir names to end with a / instead of a space; not sure how bash does that for "ls" et al
 			apply|files|push|archive)
 				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
 			capture|shelve|revive)
