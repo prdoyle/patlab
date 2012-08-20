@@ -388,8 +388,7 @@ class Hunks_With_Conflicts( Hunks ):
 			return [ None, diff ]
 		except ChangeToSameLineError:
 			pass
-		trial_diff = Diff( diff.lpath, diff.rpath )
-		trial_diff.hunks = diff.hunks[:]
+		trial_diff = diff.copy()
 		trial_diff.normalize()
 		conflict_diff = Diff( diff.rpath, diff.rpath )
 		while trial_diff:
@@ -409,7 +408,7 @@ class Hunks_With_Conflicts( Hunks ):
 				conflict_diff.hunks.append( e.left_hunk )
 				trial_diff.hunks.remove( e.left_hunk )
 				trial_diff.normalize()
-				_fix_left_line_numbers( trial_diff.hunks ) # Want to keep the right-context fixed so it stays compatible with other
+				_fix_left_line_numbers( trial_diff.hunks ) # Want to keep the right-context fixed so it stays compatible with hurdle
 
 
 class Stack( Enumerable, UIObject ):
@@ -892,6 +891,12 @@ class Diff( Enumerable, UIObject, Algebraic ):
 		self.hunks[-1].lines.extend( extension )
 		debug( debug_tag, "  extended hunk:\n%s---", self.hunks[-1] )
 
+	def copy( self ):
+		result = Diff( self.lpath, self.rpath )
+		for h in self.hunks:
+			result.hunks.append( h.copy() )
+		return result
+
 	def normalize( self ):
 		for hunk in self.hunks:
 			hunk.normalize()
@@ -1142,8 +1147,7 @@ class Diff( Enumerable, UIObject, Algebraic ):
 		if not matching_hunk:
 			return self
 
-		result = Diff( self.lpath, self.rpath )
-		result.hunks = self.hunks[:]
+		result = self.copy()
 
 		iter = _Hunk_Line_Iterator( matching_hunk )
 		top = Hunk( matching_hunk.lstart, matching_hunk.rstart )
@@ -1189,6 +1193,12 @@ class Hunk( Enumerable, UIObject, Algebraic ):
 		self.rstart = right_start_line_num
 		self.lines = []
 		self.meta_line_count = 1
+
+	def copy( self ):
+		result = Hunk( self.lstart, self.rstart )
+		for l in self.lines:
+			result.lines.append( l )
+		return result
 
 	def _has_required_lines( self, l, r ):
 		# Not recommended after normalizing.  Inefficient.
