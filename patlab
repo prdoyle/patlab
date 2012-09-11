@@ -1371,6 +1371,16 @@ def _fixup_zeros( lstart, rstart ):
 		rstart = lstart
 	return ( lstart, rstart )
 
+class Hunk_Break_Encountered:
+
+	def __init__( self, partly_formed_hunk, llen, rlen ):
+		self.upper_part = partly_formed_hunk
+		partly_formed_hunk.normalize()
+		llen -= partly_formed_hunk.num_left_lines()
+		rlen -= partly_formed_hunk.num_right_lines()
+		self.lower_part_descriptor = "@@ -%d,%d +%d,%d @@" % ( partly_formed_hunk.lstop, llen, partly_formed_hunk.rstop, rlen )
+		debug( "parse", "Hunk_Break_Encountered.  Proceeding with lower_part_descriptor = <<%s>>", self.lower_part_descriptor )
+
 def _hunk_from( descriptor, line_content ):
 	debug( "parse", "_hunk_from( \"%s\" )", descriptor )
 	[ atat, left, right, atat2 ] = descriptor.split( None, 3 )
@@ -1389,6 +1399,8 @@ def _hunk_from( descriptor, line_content ):
 			debug( "parse", "    - New last line is \"%s\"", new_last_line )
 			result.lines[-1] = new_last_line
 			result.meta_line_count += 1
+		elif line[ 0:4 ] == '@@@@': # Manually-added hunk break point
+			raise Hunk_Break_Encountered( result, llen, rlen )
 		else:
 			result.lines.append( _line_from( line ) )
 	return result.normalize()
@@ -1406,9 +1418,17 @@ def _diff_from( left_descriptor, right_descriptor, hunk_content ):
 		hunk_descriptor = hunk_content[0]
 		if hunk_descriptor[ 0:2 ] != "@@":
 			break
-		hunk = _hunk_from( hunk_descriptor, hunk_content[ 1: ] )
-		result.hunks.append( hunk )
-		hunk_content = hunk_content[ hunk.num_input_lines(): ]
+		try:
+			hunk = _hunk_from( hunk_descriptor, hunk_content[ 1: ] )
+			result.hunks.append( hunk )
+			hunk_content = hunk_content[ hunk.num_input_lines(): ]
+		except Hunk_Break_Encountered, e:
+			hunk = e.upper_part
+			result.hunks.append( hunk )
+			hunk_content = hunk_content[ hunk.num_input_lines()+1: ] # +1 for the break point line
+			hunk_content.insert( 0, e.lower_part_descriptor )
+			debug( "parse", "Caught Hunk_Break_Encountered exception; consumed %d lines:\n%s", hunk.num_input_lines(), hunk )
+			debug( "parse", "Hunk_Break_Encountered hunk_content is now:\n%s", hunk_content )
 	return result.normalize()
 
 def _patch_from( name, diff_content ):
