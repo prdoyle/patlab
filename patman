@@ -6,6 +6,9 @@ set -e # I'd like to use -E too but it's not available on older bashes
 
 # History:
 #
+# 0.7:
+# * Add view commnad
+#
 # 0.6: (patlab compatibility)
 # * Add complete command
 # * Add zip and unzip commands
@@ -38,7 +41,7 @@ set -e # I'd like to use -E too but it's not available on older bashes
 # * Touch files by default after pop and revert.  -t option restores timestamps.
 
 MAJOR_VERSION=0
-MINOR_VERSION=6
+MINOR_VERSION=7
 
 
 ###########################
@@ -90,6 +93,8 @@ Patch-specific commands:
 		List the files in the active patch.  If {PATCH} is given, lists files in that patch file.
 	diff
 		Show the changes within the active patch on stdout.
+	view {FILE} ...
+		Compare the given files before and after the active patch.
 	save
 		Update the active patch to reflect the state of the sandbox.
 	push [-N] {PATCH}
@@ -543,6 +548,18 @@ function CMD_diff(){
 	diff_files_in_active_patch $* 3>&1
 }
 
+function CMD_view(){
+	standard_variables
+	for ARG; do
+		get_filename_from_root FILE "$ARG"
+		local BEFORE="$BEFORE_DIR/$FILE"
+		local AFTER="$AFTER_DIR/$FILE"
+		[ -e "$BEFORE" ] || die "$FILE is not in top patch"
+		[ -e "$AFTER" ]  || die "$AFTER not found"
+		$DIFF_VIEWER $BEFORE_DIR/$FILE $AFTER_DIR/$FILE
+	done
+}
+
 function CMD_discard(){
 	[ -n "$*" ] || die "Specify at least one patch to discard"
 	for NAME; do
@@ -744,6 +761,7 @@ function CMD_config(){
 	echo "PATMANRC=$PATMANRC"
 	echo "PATH_STRIP=$PATH_STRIP"
 	echo "REPOSITORY=$REPOSITORY"
+	echo "DIFF_VIEWER=$DIFF_VIEWER"
 }
 
 function CMD_stipulate(){
@@ -917,6 +935,7 @@ PATCHFILE_DIR=${PATMAN_PATCHFILE_DIR:-.} # This shouldn't be blank or weird thin
 ARCHIVE_DIR=$PATCHFILE_DIR/archive
 PATCHFILE_SUFFIX=${PATMAN_PATCHFILE_SUFFIX:-.patch}
 EXTRA_DIFF_OPTS=${PATMAN_EXTRA_DIFF_OPTS:-}
+DIFF_VIEWER=${PATMAN_DIFF_VIEWER:-vimdiff}
 REPOSITORY=${PATMAN_REPOSITORY:-$HOME/.patman}
 STACK="$REPOSITORY/stack"
 REVERTIBLE="$REPOSITORY/revertible" # Patches that can be reverted by copying the contents of the "before" dir over top of the "after" dir.  TODO: Implement reverting of partially-applied patches
@@ -952,6 +971,7 @@ case $COMMAND in
 	stipulate)   CMD_stipulate   $*;;
 	top)         CMD_top         $*;;
 	unzip)       CMD_unzip       $*;;
+	view)        CMD_view        $*;;
 	zip)         CMD_zip         $*;;
 
 
