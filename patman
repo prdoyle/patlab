@@ -180,6 +180,7 @@ Maintenance commands:
 		Currently only "bash" is supported.  To enable command line
 		completion for bash, use a completion function containing this:
 		  COMPREPLY=(\`patman complete bash \$COMP_CWORD \${COMP_WORDS[@]}\`)
+		then specify: complete -o nospace -F {YOUR FUNCTION NAME} patman
 
 	Here is a summary of the top-patch manipulation commands:
 
@@ -900,8 +901,8 @@ function CMD_complete(){
 		compgen -W "add apply archive begin capture config diff discard exec files forget init patches pop push repository revert revive root save shelve stipulate version" -- $WORD
 	else
 		case "$COMMAND" in
-			add)
-				compgen -o plusdirs -f $WORD;; # I wish I could get dir names to end with a / instead of a space; not sure how bash does that for "ls" et al
+			add|view)
+				compgen -o filenames -f $WORD;;
 			apply|files|push|archive)
 				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
 			capture|shelve|revive)
@@ -916,6 +917,7 @@ function CMD_complete(){
 				tail -1 $STACK;;
 
 			begin|config|diff|exec|init|patches|repository|root|save)
+				# No completion
 				;;
 		esac
 	fi
