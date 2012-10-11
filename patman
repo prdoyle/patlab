@@ -8,6 +8,7 @@ set -e # I'd like to use -E too but it's not available on older bashes
 #
 # 0.7:
 # * Add view commnad
+# * Augment "patches" command to list patches above a given patch
 #
 # 0.6: (patlab compatibility)
 # * Add complete command
@@ -121,10 +122,11 @@ Patch-specific commands:
 		command fails if the patch already exists.)
 
 Patch stack commands:
-	patches
+	patches [PATCH]
 		Display the current patch stack.  Incomplete patches are preceeded by "+".
 		-v ("verbose") displays more information, including the list of files in
-		each patch.  Alias is "ls".
+		each patch.  If PATCH is specified, only patches above PATCH are listed.
+		Alias is "ls".
 	capture {STACK}
 		Save the current stacked patch names to the given stack file.
 	shelve {STACK}
@@ -274,6 +276,10 @@ function get_filename_from_root(){
 	local RESULT=${FILENAME##$PATCH_ROOT/}
 	[ "$RESULT" != "$FILENAME" ] || die "File $FILENAME is not under root $PATCH_ROOT"
 	eval $1=$RESULT
+}
+
+function patch_is_on_stack(){
+	grep -qFx "$1" $STACK
 }
 
 function get_full_patch_file_name_for(){
@@ -533,7 +539,7 @@ function CMD_forget(){
 function CMD_archive(){
 	[ -n "$*" ] || die "Specify at least one patch to archive"
 	for NAME; do
-		if grep -qFx $NAME $STACK; then
+		if patch_is_on_stack $NAME; then
 			die "$NAME is on the stack - cannot archive"
 		else
 			local PATCH_FILE
@@ -611,10 +617,16 @@ function CMD_patches(){
 		l) FULL_FILE_NAMES="yes";; # Meant to be reminiscent of grep -l
 	esac done
 	shift $(($OPTIND - 1))
+	local STOP_PATCH="$1"
+	if [ -n "$STOP_PATCH" ]; then
+		patch_is_on_stack "$STOP_PATCH" || die "Patch $STOP_PATCH is not on the stack"
+	fi
 	if diff -q $REVERTIBLE $STACK >/dev/null; then
 		# Note that this is not formatted like the diff output, but the caller can tell by looking at the exit status of the patman command
 		for PATCH in `cat $STACK`; do
-			if [[ "$FULL_FILE_NAMES" == "yes" ]]; then
+			if [[ "$PATCH" == "$STOP_PATCH" ]]; then
+				return 0
+			elif [[ "$FULL_FILE_NAMES" == "yes" ]]; then
 				get_full_patch_file_name_for PATCH_FILE $PATCH
 				echo "$PATCH_FILE"
 			else
@@ -625,7 +637,11 @@ function CMD_patches(){
 			fi
 		done
 	else
-		diff -U$INF $STACK $REVERTIBLE | awk 'NR>3 { print }'
+		if [ -n "$STOP_PATCH" ]; then
+			diff -U$INF $STACK $REVERTIBLE | awk 'NR>3 { print }' | grep -B"$INF" -Fx " $STOP_PATCH" | head --lines=-1
+		else
+			diff -U$INF $STACK $REVERTIBLE | awk 'NR>3 { print }'
+		fi
 		return 1
 	fi
 }
@@ -673,7 +689,7 @@ function CMD_push(){
 	shift $NUM_COMMON_OPTIONS
 	[ -n "$*" ] || die "Specify at least one patch to push"
 	for NAME; do
-		if grep -qFx $NAME $STACK; then
+		if patch_is_on_stack $NAME; then
 			verbose "$NAME is already on the stack"
 		else
 			PATCHFILE=$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX
@@ -907,7 +923,7 @@ function CMD_complete(){
 				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
 			capture|shelve|revive)
 				ls -d $PATCHFILE_DIR/$WORD*$STACK_FILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$STACK_FILE_SUFFIX\$@@" 2> /dev/null;;
-			pop)
+			pop|patches)
 				grep "^$WORD" $STACK;; # Doesn't work if $WORD contains special regex characters
 			discard)
 				head -1 $STACK;;
@@ -916,7 +932,7 @@ function CMD_complete(){
 			forget)
 				tail -1 $STACK;;
 
-			begin|config|diff|exec|init|patches|repository|root|save)
+			begin|config|diff|exec|init|repository|root|save)
 				# No completion
 				;;
 		esac
