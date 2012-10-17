@@ -920,7 +920,7 @@ function CMD_complete(){
 			add)
 				compgen -o filenames -f $WORD;;
 			view)
-				standard_variables && files_in_active_patch;;
+				standard_variables && files_in_active_patch | grep "^$WORD";;
 			apply|files|push|archive)
 				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
 			capture|shelve|revive)
