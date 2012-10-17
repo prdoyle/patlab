@@ -177,7 +177,7 @@ Maintenance commands:
 		patchfile directory.  Since this command has no effect on any
 		patches on the stack, it can be run even when the top patch is
 		incomplete.
-	patman complete {SHELL} {ARGS}
+	complete {SHELL} {ARGS}
 		Perform command-line completion as needed by the given SHELL.
 		Currently only "bash" is supported.  To enable command line
 		completion for bash, use a completion function containing this:
@@ -917,8 +917,10 @@ function CMD_complete(){
 		compgen -W "add apply archive begin capture config diff discard exec files forget init patches pop push repository revert revive root save shelve stipulate version" -- $WORD
 	else
 		case "$COMMAND" in
-			add|view)
+			add)
 				compgen -o filenames -f $WORD;;
+			view)
+				standard_variables && files_in_active_patch;;
 			apply|files|push|archive)
 				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
 			capture|shelve|revive)
