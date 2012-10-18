@@ -1,0 +1,3 @@
+--- before/test/patman-sandbox/a/1.txt
++++ after/test/patman-sandbox/a/1.txt
++New last

@@ -3,6 +3,8 @@
 #set -x
 set -e
 
+export PATH=$PWD:$PATH # Get the current patman rather than the one on the path
+
 WD="$PWD/test"
 GOALS="$WD/patman-goals"      # Ideal output from tests to compare agains; don't change this unless you change the verify_dir_contents() function too
 CODE="$WD/patman-code"        # Original copies of "source code"
@@ -14,6 +16,14 @@ export PATH=.:$PATH # Find the development copy of patman
 function die(){
 	echo $* 1>&2
 	exit 1
+}
+
+function qpushd() {
+	pushd $* > /dev/null
+}
+
+function qpopd(){
+	popd  $* > /dev/null
 }
 
 function clean_up(){
@@ -64,10 +74,10 @@ function verify_file_contents(){
 }
 
 function verify_dir_listing(){
-	cd $2
+	qpushd $2
 	#find . | sort | verify_text $1
 	ls -dl `find .` | awk 'BEGIN{FS="[+ ]+"}; {print substr($1,0,4), $9}' | verify_text $1
-	cd - > /dev/null
+	qpopd
 }
 
 function verify_dir_contents(){
@@ -113,7 +123,7 @@ case $COMMAND in
 	;;
 
 	"");; # Just run the tests below
-	*) die "Unknown pmtest command: $COMMAND";;
+	*) die "Unknown test-patman command: $COMMAND";;
 esac
 
 if {
@@ -123,7 +133,7 @@ set -e
 #
 # IMPORTANT NOTE
 #
-# Please make sure "pmtest" gives a passing result before running "pmtest record" and/or modifying the tests
+# Please make sure "test-patman" gives a passing result before running "test-patman record" and/or modifying the tests
 
 ##############
 
@@ -257,11 +267,11 @@ verify_dir_contents 320 $SANDBOX
 
 # Pushing a patch from the wrong place
 
-cd code
+qpushd code
 { verify_fail patman push test2 ;} | verify_text 325
 remove_failed_patch_debris $SANDBOX
 patman revert test2
-cd - > /dev/null
+qpopd
 verify_dir_contents  326 $SANDBOX
 verify_file_contents 327 $PATMAN_REPOSITORY/revertible
 verify_file_contents 328 $PATMAN_REPOSITORY/stack
@@ -383,6 +393,38 @@ patman patches    | verify_text 532
 verify_dir_contents             534 $SANDBOX
 
 ##############
+
+echo $PWD
+
+start_fresh
+
+patman begin test9
+patman add $SANDBOX/a/1.txt
+echo "New last line for test9" >> $SANDBOX/a/1.txt
+patman add $SANDBOX/a/2.txt
+echo "New last line for test9" >> $SANDBOX/a/2.txt
+patman add $SANDBOX/b/1.txt
+patman add $SANDBOX/b/2.txt
+verify_dir_contents  600 $SANDBOX
+
+patman files | verify_text 610
+patman sub $SANDBOX/b/1.txt
+patman files | verify_text 613
+patman sub $SANDBOX/b/2.txt
+patman files | verify_text 616
+{ verify_fail patman sub $SANDBOX/b/1.txt ;} # Already subtracted
+{ verify_fail patman sub $SANDBOX/nonexistent.txt ;}
+verify_dir_contents  619 $SANDBOX
+
+{ verify_fail patman sub $SANDBOX/a/1.txt ;} # File has been modified
+patman sub -r $SANDBOX/a/1.txt
+verify_dir_contents  620 $SANDBOX
+patman files | verify_text 623
+{ verify_fail patman sub $SANDBOX/a/1.txt ;} # Already subtracted
+patman sub -d $SANDBOX/a/2.txt
+verify_dir_contents  625 $SANDBOX
+patman files | verify_text 628
+
 
 #start_fresh
 #

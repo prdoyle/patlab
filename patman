@@ -512,8 +512,6 @@ function CMD_add(){
 
 function CMD_sub(){
 	standard_variables
-	common_options "N" $*
-	shift $NUM_COMMON_OPTIONS
 	local REVERT_IF_DIFFERENT="no"
 	local DISCARD_IF_DIFFERENT="no"
 	local TOUCH="touch"
@@ -523,21 +521,22 @@ function CMD_sub(){
 		d) DISCARD_IF_DIFFERENT="yes";;
 		t) TOUCH="no-touch";;
 	esac done
+	shift $(($OPTIND - 1))
 	verbose "Subtracting files from $PATCH_NAME {"
 	for FILE; do
-		local BEFORE="$BEFORE_DIR/$FILE"
+		get_filename_relative_to_root RELATIVE_NAME $FILE
+		local BEFORE="$BEFORE_DIR/$RELATIVE_NAME"
 		[ -e "$BEFORE" ] || die "$FILE is not in active patch"
-		if diff -q "$BEFORE" "$FILE"; then
-			restore_files_from_before $TOUCH $FILE
-		elif [[ "REVERT_IF_DIFFERENT" == "yes" ]]; then
-			restore_files_from_before $TOUCH $FILE
-		elif [[ "DISCARD_IF_DIFFERENT" == "yes" ]]; then
+		if diff -q "$BEFORE" "$FILE" > /dev/null; then
+			restore_files_from_before $TOUCH $RELATIVE_NAME
+		elif [[ "$DISCARD_IF_DIFFERENT" == "yes" ]]; then
 			mv -f "$BEFORE" "$REPOSITORY/.backups/"
+		elif [[ "$REVERT_IF_DIFFERENT" == "yes" ]]; then
+			restore_files_from_before $TOUCH $RELATIVE_NAME
 		else
 			die "File $FILE has changed.  Use -r to revert; use -d to discard."
 		fi
 	done
-	add_files_to_active_patch $*
 	verbose "} done."
 	terse $PATCH_NAME
 }
