@@ -7,6 +7,7 @@ set -e # I'd like to use -E too but it's not available on older bashes
 # History:
 #
 # 0.7:
+# * Add sub commnad
 # * Add view commnad
 # * Augment "patches" command to list patches above a given patch
 #
@@ -90,6 +91,11 @@ Patch-specific commands:
 		the current directory as its root.
 	add [-N] {FILE} ...
 		Add the given files to the active patch, and mark them writeable.
+	sub [-t] [-r] [-d] {FILE} ...
+		Remove the given files from the active patch.  If -t is present,
+		restore file timestamps.  Files that have been altered will not
+		be removed from the patch, unless -r or -d is present: -r will
+		behave like "revert" and -d will behave like "discard" (see below).
 	files [{PATCH} ...]
 		List the files in the active patch.  If {PATCH} is given, lists files in that patch file.
 	diff
