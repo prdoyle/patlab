@@ -96,6 +96,8 @@ Patch-specific commands:
 		Show the changes within the active patch on stdout.
 	view {FILE} ...
 		Compare the given files before and after the active patch.
+		FILE is relative to the patch root directory; that is, the FILE
+		argument must be one of the files listed by "patman files".
 	save
 		Update the active patch to reflect the state of the sandbox.
 	push [-N] {PATCH}
@@ -269,13 +271,26 @@ function ensure_standard_variables(){
 	fi
 }
 
-function get_filename_from_root(){
+function get_filename_relative_to_root(){
 	ensure_standard_variables
 	local FILENAME
 	get_absolute_path FILENAME $2
 	local RESULT=${FILENAME##$PATCH_ROOT/}
 	[ "$RESULT" != "$FILENAME" ] || die "File $FILENAME is not under root $PATCH_ROOT"
 	eval $1=$RESULT
+}
+
+function expand_root_relative_filename(){ # Opposite of get_filename_relative_to_root
+	ensure_standard_variables
+	local FILENAME="$PATCH_ROOT/$2"
+	local PREFIX=${PWD##$PATCH_ROOT/}
+	if [[ "$PREFIX" == "$PWD" ]]; then
+		# PWD is not under PATCH_ROOT.  Return an absolute path
+		eval $1=$FILENAME
+	else
+		# PWD is under PATCH_ROOT.  Return a relative path
+		eval $1=${FILENAME##$PREFIX}
+	fi
 }
 
 function patch_is_on_stack(){
@@ -389,7 +404,7 @@ function begin_patch(){
 function add_files_to_active_patch(){
 	ensure_standard_variables
 	for FILE; do
-		get_filename_from_root RELATIVE_NAME $FILE
+		get_filename_relative_to_root RELATIVE_NAME $FILE
 		local BACKUP="$BEFORE_DIR/$RELATIVE_NAME"
 		if [ -e "$BACKUP" ]; then die "$FILE has already been added"; fi
 		if [ ! -e "$FILE" ]; then
@@ -557,8 +572,7 @@ function CMD_diff(){
 
 function CMD_view(){
 	standard_variables
-	for ARG; do
-		get_filename_from_root FILE "$ARG"
+	for FILE; do # File names are relative to root
 		local BEFORE="$BEFORE_DIR/$FILE"
 		local AFTER="$AFTER_DIR/$FILE"
 		[ -e "$BEFORE" ] || die "$FILE is not in top patch"
