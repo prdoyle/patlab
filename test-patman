@@ -3,10 +3,11 @@
 #set -x
 set -e
 
-GOALS="$PWD/test/patman-goals"      # Ideal output from tests to compare agains; don't change this unless you change the verify_dir_contents() function too
-CODE="$PWD/test/patman-code"        # Original copies of "source code"
-SANDBOX="$PWD/test/patman-sandbox"  # Source code whose changes are being tracked by patman
-WORK="$PWD/test/patman-work"        # A place to put arbitrary files that will get deleted when we run "clean"
+WD="$PWD/test"
+GOALS="$WD/patman-goals"      # Ideal output from tests to compare agains; don't change this unless you change the verify_dir_contents() function too
+CODE="$WD/patman-code"        # Original copies of "source code"
+SANDBOX="$WD/patman-sandbox"  # Source code whose changes are being tracked by patman
+WORK="$WD/patman-work"        # A place to put arbitrary files that will get deleted when we run "clean"
 
 export PATH=.:$PATH # Find the development copy of patman
 
@@ -19,9 +20,9 @@ function clean_up(){
 	# I can't bring myself to do an rm -rf on a bunch of shell variables,
 	# so instead I just mv them, which will at least give me one chance to
 	# recover from a moment's stupidity.
-	rm -rf .graveyard
-	mkdir .graveyard
-	mv $PATMAN_PATCHFILE_DIR $PATMAN_REPOSITORY $WORK $SANDBOX .graveyard/ 2>/dev/null || true
+	rm -rf "$WD/.graveyard"
+	mkdir "$WD/.graveyard"
+	mv $PATMAN_PATCHFILE_DIR $PATMAN_REPOSITORY $WORK $SANDBOX "$WD/.graveyard/" 2>/dev/null || true
 }
 
 function start_fresh(){
@@ -40,7 +41,12 @@ function verify_fail(){
 
 function normalize_patch(){
 	# diff produces things like timestamps that we don't care about, so strip them out
-	awk 'NR>2 {print}'
+	awk '/^---/ {print $1, $2} /^+++/ {print $1, $2}'
+}
+
+function remove_failed_patch_debris(){
+	find $1 -name '*.rej'  | xargs rm -f
+	find $1 -name '*.orig' | xargs rm -f
 }
 
 function verify_text(){
@@ -66,11 +72,13 @@ function verify_dir_listing(){
 
 function verify_dir_contents(){
 	verify_dir_listing "$1L" $2
-	IDEAL="test/patman-goals/$1" # We don't use too many variables here, such as $GOALS, because if we get this wrong, we could rm -rf the wrong thing!
+	IDEAL="$GOALS/$1"
 	ACTUAL=$2
 	[ -d "$ACTUAL" ] || die "No such directory $ACTUAL"
 	if [[ "$MODE" == "record" ]]; then
-		rm -rf $IDEAL
+		if [ -e $IDEAL ]; then
+			mv -f $IDEAL "$WD/.graveyard/"
+		fi
 		cp -a $ACTUAL $IDEAL
 	else
 		[ -d "$IDEAL" ] || die "No such directory $IDEAL"
@@ -93,14 +101,14 @@ case $COMMAND in
 	clean)
 	clean_up
 	rm -f $STDOUT $STDERR
-	rm -rf .prev-goals
+	rm -rf "$WD/.prev-goals"
 	exit $?
 	;;
 
 	record)
-	rm -rf .prev-goals
-	! [ -e goals ] || mv goals .prev-goals
-	mkdir goals
+	rm -rf "$WD/.prev-goals"
+	! [ -e $GOALS ] || mv -f $GOALS "$WD/.prev-goals"
+	mkdir $GOALS
 	MODE="record"
 	;;
 
@@ -237,6 +245,7 @@ verify_file_contents 299 $PATMAN_REPOSITORY/stack
 { verify_fail patman pop -a            ;} | verify_text 305 # Can't pop an incomplete patch
 { verify_fail patman revert wrong.name ;} | verify_text 306 # Can't revert with the wrong name
 patman revert test3
+remove_failed_patch_debris $SANDBOX
 verify_dir_contents 308 $SANDBOX
 
 patman push test2
@@ -250,6 +259,7 @@ verify_dir_contents 320 $SANDBOX
 
 cd code
 { verify_fail patman push test2 ;} | verify_text 325
+remove_failed_patch_debris $SANDBOX
 patman revert test2
 cd - > /dev/null
 verify_dir_contents  326 $SANDBOX
@@ -259,6 +269,7 @@ verify_file_contents 328 $PATMAN_REPOSITORY/stack
 # Stipulate
 
 { verify_fail patman push test3  ;} | verify_text 330
+remove_failed_patch_debris $SANDBOX
 patman stipulate test3
 verify_dir_contents 332 $SANDBOX
 

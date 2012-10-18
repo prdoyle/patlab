@@ -235,7 +235,7 @@ function get_absolute_path(){
 }
 
 function common_options(){
-	ALLOWED_OPTIONS="$1"; shift
+	local ALLOWED_OPTIONS="$1"; shift
 	TOUCH_NONEXISTENT_FILES="no"
 	OPTIND=0
 	while getopts "$ALLOWED_OPTIONS" Option; do case $Option in
@@ -419,9 +419,9 @@ function add_files_to_active_patch(){
 }
 
 function restore_files_from_before(){
-	local TOUCH=$1
+	local TOUCH=$1; shift
 	ensure_standard_variables incomplete_is_ok
-	for FILE in `files_in_active_patch`; do # TODO: This whole copying process should succeed or fail as a unit
+	for FILE; do # TODO: This whole copying process should succeed or fail as a unit
 		mv -f $BEFORE_DIR/$FILE $PATCH_ROOT/$FILE
 		if [[ $TOUCH == "touch" ]]; then
 			touch $PATCH_ROOT/$FILE
@@ -476,12 +476,12 @@ function save_top_patch(){
 
 function pop_top_patch(){
 	ensure_standard_variables
-	local TOUCH=${1:-"don't touch"}
+	local TOUCH=${1:-"no-touch"}
 	get_full_patch_file_name TARGET
 	verbose "Popping $PATCH to $TARGET {"
 	save_top_patch_file
 	remove_first_line $STACK
-	restore_files_from_before $TOUCH
+	restore_files_from_before $TOUCH `files_in_active_patch`
 	remove_top_patch_db
 	verbose "} done."
 }
@@ -505,6 +505,38 @@ function CMD_add(){
 	common_options "N" $*
 	shift $NUM_COMMON_OPTIONS
 	verbose "Adding files to $PATCH_NAME {"
+	add_files_to_active_patch $*
+	verbose "} done."
+	terse $PATCH_NAME
+}
+
+function CMD_sub(){
+	standard_variables
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
+	local REVERT_IF_DIFFERENT="no"
+	local DISCARD_IF_DIFFERENT="no"
+	local TOUCH="touch"
+	OPTIND=0
+	while getopts "rdt" Option; do case $Option in
+		r) REVERT_IF_DIFFERENT="yes";;
+		d) DISCARD_IF_DIFFERENT="yes";;
+		t) TOUCH="no-touch";;
+	esac done
+	verbose "Subtracting files from $PATCH_NAME {"
+	for FILE; do
+		local BEFORE="$BEFORE_DIR/$FILE"
+		[ -e "$BEFORE" ] || die "$FILE is not in active patch"
+		if diff -q "$BEFORE" "$FILE"; then
+			restore_files_from_before $TOUCH $FILE
+		elif [[ "REVERT_IF_DIFFERENT" == "yes" ]]; then
+			restore_files_from_before $TOUCH $FILE
+		elif [[ "DISCARD_IF_DIFFERENT" == "yes" ]]; then
+			mv -f "$BEFORE" "$REPOSITORY/.backups/"
+		else
+			die "File $FILE has changed.  Use -r to revert; use -d to discard."
+		fi
+	done
 	add_files_to_active_patch $*
 	verbose "} done."
 	terse $PATCH_NAME
@@ -575,7 +607,7 @@ function CMD_view(){
 	for FILE; do # File names are relative to root
 		local BEFORE="$BEFORE_DIR/$FILE"
 		local AFTER="$AFTER_DIR/$FILE"
-		[ -e "$BEFORE" ] || die "$FILE is not in top patch"
+		[ -e "$BEFORE" ] || die "$FILE is not in active patch"
 		[ -e "$AFTER" ]  || die "$AFTER not found"
 		$DIFF_VIEWER $BEFORE_DIR/$FILE $AFTER_DIR/$FILE
 	done
@@ -671,7 +703,7 @@ function CMD_pop(){
 	OPTIND=0
 	while getopts "at" Option; do case $Option in
 		a) POP_ALL="yes";;
-		t) TOUCH="don't touch";;
+		t) TOUCH="no-touch";;
 	esac done
 	shift $(($OPTIND - 1))
 	if [[ "$*" == "" ]]; then
@@ -745,7 +777,7 @@ function CMD_revert(){
 	OPTIND=0
 	while getopts "ct" Option; do case $Option in
 		c) COMPLETE=1;;
-		t) TOUCH="don't touch";;
+		t) TOUCH="no-touch";;
 	esac done
 	shift $(($OPTIND - 1))
 	[ -n "$*" ] || die "Specify at least one patch to revert"
@@ -757,7 +789,7 @@ function CMD_revert(){
 			fi
 			# Patch is guaranteed incomplete at this point
 			verbose "Reverting patch $PATCH_NAME {"
-			restore_files_from_before $TOUCH
+			restore_files_from_before $TOUCH `files_in_active_patch`
 			remove_top_patch_db
 			verbose "} done."
 		else
@@ -1003,6 +1035,7 @@ case $COMMAND in
 	save)        CMD_save        $*;;
 	shelve)      CMD_shelve      $*;;
 	stipulate)   CMD_stipulate   $*;;
+	sub)         CMD_sub         $*;;
 	top)         CMD_top         $*;;
 	unzip)       CMD_unzip       $*;;
 	view)        CMD_view        $*;;
