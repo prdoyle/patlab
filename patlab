@@ -503,14 +503,16 @@ class Stack( Enumerable, UIObject ):
 		"""
 		return self.filter( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], filename_pattern ) ) )
 
-	def conflicts( self ):
+	def conflicts( self, *indexes ):
 		"""
 		Find and print the indexes of all patches that would conflict were we to
 		attempt the "over" operation.
 		"""
-		for f in range( len(self.patches)-1, 0, -1 ):
+		if not indexes:
+			indexes = range( len(self.patches)-1 )
+		for f in indexes:
 			floater = self.patches[ f ]
-			for s in range( 0, f ):
+			for s in range( f+1, len(self.patches) ):
 				sinker = self.patches[ s ]
 				try:
 					floater = floater.over( sinker )
