@@ -410,6 +410,15 @@ class Hunks_With_Conflicts( Hunks ):
 				trial_diff.normalize()
 				_fix_left_line_numbers( trial_diff.hunks ) # Want to keep the right-context fixed so it stays compatible with hurdle
 
+class Hunks_Without_Conflicts( Hunks ):
+
+	def __init__( self, hurdle_patch ):
+		self.complement = Hunks_With_Conflicts( hurdle_patch )
+
+	def partition_diff( self, diff ):
+		result = self.complement.partition_diff( diff )
+		result.reverse()
+		return result
 
 class Stack( Enumerable, UIObject ):
 	"""
@@ -469,11 +478,19 @@ class Stack( Enumerable, UIObject ):
 		self.patches[ index:index+2 ] = [ squashed ]
 		return self
 
-	def filter( self, index, filter ):
-		"""Replace patch at index with two patches formed by filtering the original patch using the given filter"""
+	def partition( self, index, filter ):
+		"""Replace patch at index with two patches formed by filtering the original patch using the given filter."""
 		[ matching, non_matching ] = filter.partition_patch( self.patches[ index ] )
 		self.patches[ index:index+1 ] = [ matching.shrinkwrapped(), non_matching.shrinkwrapped() ]
 		return self
+
+	def distill( self, index ):
+		"""Replace patch at index with two patches such that the upper patch has no conflicts with patch at index-1."""
+		return self.partition( index, Hunks_Without_Conflicts( self.patches[ index-1 ] ) )
+
+	def sift( self, index ):
+		"""Replace patch at index with two patches such that the lower patch has no conflicts with patch at index+1."""
+		return self.partition( index, Hunks_With_Conflicts( self.patches[ index+1 ] ) )
 
 	def grep_hunks( self, index, regex ):
 		"""
@@ -481,7 +498,7 @@ class Stack( Enumerable, UIObject ):
 		least one line matching the given regex, and index+1 contains all the
 		non-matching hunks.
 		"""
-		return self.filter( index, Hunks_With_Lines( lambda l: re.search( regex, l.content ) ) )
+		return self.partition( index, Hunks_With_Lines( lambda l: re.search( regex, l.content ) ) )
 
 	def grep_lines( self, index, regex ):
 		"""
@@ -489,7 +506,7 @@ class Stack( Enumerable, UIObject ):
 		the search string, and index+1 contains all the other lines.
 		NOTE: Usually you want grep_hunks instead.
 		"""
-		return self.filter( index, Lines( lambda l: re.search( regex, l.content ) ) )
+		return self.partition( index, Lines( lambda l: re.search( regex, l.content ) ) )
 
 	def grep( self, index, regex ):
 		"Alias for grep_hunks" # This is likely what people usually want.  grep_lines can really fragment the hunks into uselessly small pieces.
@@ -501,7 +518,7 @@ class Stack( Enumerable, UIObject ):
 		files matching the given filename pattern, and index+1 contains all the
 		non-matching hunks.
 		"""
-		return self.filter( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], filename_pattern ) ) )
+		return self.partition( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], filename_pattern ) ) )
 
 	def float_conflicts( self, *indexes ):
 		"""
@@ -585,7 +602,7 @@ class Stack( Enumerable, UIObject ):
 		self.patches[ index:index+2 ] = self._edit2( self.patches[ index:index+2 ] )
 		return self
 
-	def sift( self, index ):
+	def cull( self, index ):
 		"""
 		Open the patches at the given index in a text editor, along with new
 		empty patch file, so the user can move some diffs/hunks from the original
