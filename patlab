@@ -503,7 +503,7 @@ class Stack( Enumerable, UIObject ):
 		"""
 		return self.filter( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], filename_pattern ) ) )
 
-	def conflicts( self, *indexes ):
+	def float_conflicts( self, *indexes ):
 		"""
 		Find and print the indexes of all patches that would conflict were we to
 		attempt the "over" operation.
@@ -512,10 +512,27 @@ class Stack( Enumerable, UIObject ):
 			indexes = range( len(self.patches)-1 )
 		for f in indexes:
 			floater = self.patches[ f ]
-			for s in range( f+1, len(self.patches) ):
+			for s in range( 0, f ):
 				sinker = self.patches[ s ]
 				try:
 					floater = floater.over( sinker )
+				except ChangeToSameLineError:
+					print "%d * %d" % ( f, s )
+					continue
+
+	def sink_conflicts( self, *indexes ):
+		"""
+		Find and print the indexes of all patches that would conflict were we to
+		attempt the "under" operation.  (Generally slower than float_conflicts.)
+		"""
+		if not indexes:
+			indexes = range( len(self.patches)-1 )
+		for s in indexes:
+			sinker = self.patches[ s ]
+			for f in range( s+1, len(self.patches) ):
+				floater = self.patches[ f ]
+				try:
+					sinker = sinker.under( floater )
 				except ChangeToSameLineError:
 					print "%d * %d" % ( f, s )
 					continue
