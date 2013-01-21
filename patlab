@@ -602,7 +602,7 @@ class Stack( Enumerable, UIObject ):
 		self.patches[ index:index+2 ] = self._edit2( self.patches[ index:index+2 ] )
 		return self
 
-	def cull( self, index ):
+	def separate( self, index ):
 		"""
 		Open the patches at the given index in a text editor, along with new
 		empty patch file, so the user can move some diffs/hunks from the original
