@@ -432,8 +432,7 @@ class Hunks_Without_Conflicts( Hunks ):
 		result.reverse()
 		return result
 
-def _hunk_changes_only_whitespace( hunk ):
-	iter = _Hunk_Line_Iterator( hunk )
+def _changes_only_whitespace( iter ):
 	while iter.more_to_go():
 		[ left, right ] = iter.pop_pair()
 		debug( "whitespace", "Processing lines:\n\t%s\t%s", left, right )
@@ -484,7 +483,7 @@ def _hunk_changes_only_whitespace( hunk ):
 class Hunks_Changing_Only_Whitespace( Hunks ):
 
 	def __init__( self ):
-		Hunks.__init__( self, _hunk_changes_only_whitespace )
+		Hunks.__init__( self, lambda h: _hunk_changes_only_whitespace( _Hunk_Line_Iterator(h) ) )
 
 	def _upper_patch_suffix( self ): return ".whitespace"
 
