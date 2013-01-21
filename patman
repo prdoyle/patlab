@@ -4,44 +4,6 @@
 #set -x
 set -e # I'd like to use -E too but it's not available on older bashes
 
-# History:
-#
-# 0.7:
-# * Add sub commnad
-# * Add view commnad
-# * Augment "patches" command to list patches above a given patch
-#
-# 0.6: (patlab compatibility)
-# * Add complete command
-# * Add zip and unzip commands
-# * Add common_options function, starting with -N (for touching nonexistent files) 20120628
-# * Add -l flag to "patches" command  - list file names of the patches 20120611
-#
-# 0.5:
-# * Add -v flag to "patches" command (and alias "ls") - list files touched by the patch
-# * Ignore comments and blank lines in .stack files (though a 'patman capture' clobbers them)
-# * Change back from "pwd -P" to readlink so patman can work with symlinked root directories; use perl command if readlink is unavailable
-# * Check for empty arg lists 20110330
-# * Add archive command 20110330
-# * Go back to "u" format for diffs.  Nobody's using them but me, and "c" format is a pain.  20110315
-# * Add archive option to "forget" command  20110312
-# * Eat stderr from ex command.  On linux it was emitting a carriage return.  20100323
-# * Add -F to grep command for CMD_pop, and -x to most grep commands,  20090928
-# * Use "pwd -P" instead of readlink for portability on AIX 20090901
-# * Added capture, shelve, revive 20090727
-# * Implemented pop -a 20090706
-# * Fix bug in "apply" command when active patch contains no files 20090605
-# * Added annotation for forgotten patches
-# * Take diff options in "patman diff" command
-# * Help on stderr
-# * Don't use mktemp - not portable
-# * Use more portable diff -c format
-#
-# 0.4:
-# * Add "apply" command
-# * Rename "absorb" to "forget"
-# * Touch files by default after pop and revert.  -t option restores timestamps.
-
 MAJOR_VERSION=0
 MINOR_VERSION=7
 
