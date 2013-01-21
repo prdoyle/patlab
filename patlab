@@ -19,7 +19,7 @@ import optparse # Python <2.7 doesn't have argparse
 from zipfile import ZipFile, BadZipfile, ZIP_DEFLATED
 
 def debug( tag, *args ):
-	if True: #not tag in [ "parse" ]:
+	if True: #not tag in [ "whitespace" ]:
 		return
 	if len(args) >= 2:
 		string = args[0] % args[1:]
@@ -207,6 +207,14 @@ class Filter:
 	def normalize( self, things ):
 		return map( lambda t: t.normalize(), things )
 
+	def _upper_patch_name( self, lower_patch_name ):
+		if ( lower_patch_name[-6:] == '.patch' ):
+			return lower_patch_name[:-6] + self._upper_patch_suffix() + ".patch"
+		else:
+			return lower_patch_name + self._upper_patch_suffix()
+
+	def _upper_patch_suffix( self ): return ".matches"
+
 class Piecewise_Filter( Filter ):
 
 	def partition_elements( self, source, filter_func, targets ):
@@ -237,7 +245,7 @@ class Diffs( Piecewise_Filter ):
 
 	def partition_patch( self, patch ):
 		return self.normalize( self.partition_elements( patch,
-			self.diff_filter, [ Patch( patch.name + ".matches" ), Patch( patch.name ) ] ) )
+			self.diff_filter, [ Patch( self._upper_patch_name( patch.name ) ), Patch( patch.name ) ] ) )
 
 # These _fix functions re-establish the invariant that
 #   h[i].rstart - h[i].lstart == h[i-1].rstop - h[i-1].lstop
@@ -263,7 +271,7 @@ class Hunks( Piecewise_Filter ):
 		self.hunk_filter = _filter( predicate )
 
 	def partition_patch( self, patch ):
-		return self.partition_elements( patch, lambda d: self.partition_diff(d), [ Patch( patch.name + ".matches" ), Patch( patch.name ) ] )
+		return self.partition_elements( patch, lambda d: self.partition_diff(d), [ Patch( self._upper_patch_name( patch.name ) ), Patch( patch.name ) ] )
 
 	def partition_diff( self, diff ):
 		[ yes, no ] = self.partition_elements( diff, self.hunk_filter, [ Diff( diff.rpath, diff.rpath ), Diff( diff.lpath, diff.rpath ) ] )
@@ -372,6 +380,8 @@ class Hunks_With_Conflicts( Hunks ):
 	def __init__( self, hurdle_patch ):
 		self.hurdle_patch = hurdle_patch # "hurdle_patch" is the patch you're trying to get over (get it?  ha ha)
 
+	def _upper_patch_suffix( self ): return ".conflicts"
+
 	def partition_diff( self, diff ):
 		debug( "HWC", "HWC diff:\n%s", diff )
 		try:
@@ -415,10 +425,68 @@ class Hunks_Without_Conflicts( Hunks ):
 	def __init__( self, hurdle_patch ):
 		self.complement = Hunks_With_Conflicts( hurdle_patch )
 
+	def _upper_patch_suffix( self ): return ".noconflicts"
+
 	def partition_diff( self, diff ):
 		result = self.complement.partition_diff( diff )
 		result.reverse()
 		return result
+
+def _hunk_changes_only_whitespace( hunk ):
+	iter = _Hunk_Line_Iterator( hunk )
+	while iter.more_to_go():
+		[ left, right ] = iter.pop_pair()
+		debug( "whitespace", "Processing lines:\n\t%s\t%s", left, right )
+		left_deletes  = left  and  left.kind == '-'
+		right_inserts = right and right.kind == '+'
+		if left_deletes:
+			if right_inserts:
+				pass # Must compare content
+			elif left.content.isspace():
+				debug( "whitespace", "  Whitespace deleted" )
+				continue
+			else:
+				debug( "whitespace", "  Content deleted" )
+				return False
+		else:
+			if not right_inserts:
+				debug( "whitespace", "  No change" )
+				continue
+			elif right.content.isspace():
+				debug( "whitespace", "  Whitespace inserted" )
+				continue
+			else:
+				debug( "whitespace", "  Content inserted" )
+				return False
+		# Compare content
+		[ left, right ] = [ left.content, right.content ]
+		ri = len( right ) - 1
+		for li in range( len( left ) - 1, -1, -1 ):
+			while ri >= 0 and right[ ri ].isspace():
+				ri -= 1
+			if not left[li].isspace():
+				if ri < 0:
+					debug( "whitespace", "\n\t%s ^ Character '%s' deleted", li*' ', left[li] )
+					return False;
+				elif left[ li ] != right[ ri ]:
+					debug( "whitespace", "\n\t%s ^ Character '%s' changed to '%s'", li*' ', left[li], right[ri] )
+					return False;
+				else:
+					ri -= 1
+		result = ( ri == -1 )
+		if result:
+			debug( "whitespace", "\n  Scan found no difference" )
+		else:
+			debug( "whitespace", "\n\t%s ^ Prefix inserted: '%s'", li*' ', right[:ri+1] )
+			return False
+	return True
+
+class Hunks_Changing_Only_Whitespace( Hunks ):
+
+	def __init__( self ):
+		Hunks.__init__( self, _hunk_changes_only_whitespace )
+
+	def _upper_patch_suffix( self ): return ".whitespace"
 
 class Stack( Enumerable, UIObject ):
 	"""
@@ -491,6 +559,10 @@ class Stack( Enumerable, UIObject ):
 	def sift( self, index ):
 		"""Replace patch at index with two patches such that the lower patch has no conflicts with patch at index+1."""
 		return self.partition( index, Hunks_With_Conflicts( self.patches[ index+1 ] ) )
+
+	def whitespace_hunks( self, index ):
+		"""Replace patch at index with two patches such that the upper patch has only hunks changing whitespace."""
+		return self.partition( index, Hunks_Changing_Only_Whitespace( ) )
 
 	def grep_hunks( self, index, regex ):
 		"""
