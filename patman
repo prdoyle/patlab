@@ -90,6 +90,18 @@ Patch-specific commands:
 		patch.  (It's almost like "push PATCH" is equivalent to
 		"begin PATCH" followed by "apply PATCH" except that the "begin"
 		command fails if the patch already exists.)
+	split {PATCH}
+		Save the active patch.  Then begin a new patch called {PATCH}.
+		Steal all the changes from the formerly active patch (so that
+		patch becomes empty) and put them in {PATCH}.  Using the view
+		command, you can then modify the "before" version of each file,
+		effectively backporting some of the changes back into the
+		previously active patch.  This has the effect of dividing the
+		active patch into two patches.
+		*NOTE*: Only edit the "before" versions of files that have
+		actually been added to the previously-active patch.  Editing
+		other files could cause you to lose your work.  The files that
+		are safe to edit will be marked writable.
 
 Patch stack commands:
 	patches [PATCH]
@@ -954,6 +966,27 @@ function CMD_complete(){
 	fi
 }
 
+function CMD_split(){
+	standard_variables
+	local NEW_PATCH="$1"; shift
+	[ -n "$NEW_PATCH" ] || die "Specify the name for the new patch"
+	[ -z "$*" ]         || die "Specify just one new patch name"
+	save_top_patch_file
+	local FILES="`files_in_active_patch`"
+	local OLD_BEFORE_DIR="$BEFORE_DIR"
+	CMD_begin "$NEW_PATCH"
+	standard_variables
+	add_files_to_active_patch $FILES
+
+	# Scary hack time
+	local BACKUP_DIR="$REPOSITORY/.backups/split.d"
+	rm -rf "$BACKUP_DIR" # I don't like "rm -rf $VARIABLE" generally, but this one should be safe enough
+	mv "$BEFORE_DIR" "$BACKUP_DIR"
+	cp -a "$OLD_BEFORE_DIR" "$BEFORE_DIR"
+
+	chmod -R +w "$BEFORE_DIR" # Writeable so the user knows which files are ok to edit
+}
+
 ###########################
 ##
 ##  Main logic
@@ -1001,6 +1034,7 @@ case $COMMAND in
 	root)        CMD_root        $*;;
 	save)        CMD_save        $*;;
 	shelve)      CMD_shelve      $*;;
+	split)       CMD_split       $*;;
 	stipulate)   CMD_stipulate   $*;;
 	sub)         CMD_sub         $*;;
 	top)         CMD_top         $*;;
