@@ -483,7 +483,7 @@ def _changes_only_whitespace( iter ):
 class Hunks_Changing_Only_Whitespace( Hunks ):
 
 	def __init__( self ):
-		Hunks.__init__( self, lambda h: _hunk_changes_only_whitespace( _Hunk_Line_Iterator(h) ) )
+		Hunks.__init__( self, lambda h: _changes_only_whitespace( _Hunk_Line_Iterator(h) ) )
 
 	def _upper_patch_suffix( self ): return ".whitespace"
 
@@ -1585,14 +1585,17 @@ class TestError:
 
 	def __repr__( self ): return "TestError( \"%s\" )" % self.description
 
+def _pacify():
+	stdout.write('.')
+	stdout.flush()
+
 def _check_empty( patch, message, *args ):
 	if patch:
 		patch = patch.shrinkwrapped()
 	if patch:
 		raise TestError( message % args )
 	else:
-		stdout.write('.')
-		stdout.flush()
+		_pacify()
 
 def main():
 	global args
@@ -1618,18 +1621,17 @@ def main():
 			print "  Compatibility: ",
 			for i in range( len(patches)-1 ):
 				[ second, first ] = patches[ i:i+2 ]
-				error_occurred = False
 				try:
 					first.compose( second )
+					_pacify()
 				except PatlabError:
-					error_occurred = True
-				_check_empty( error_occurred, "Should be able to compose %s with %s", first.name, second.name )
+					raise TestError( "Should be able to compose %s with %s", first.name, second.name )
 			print " ok"
 			print "  Checksum: ",
 			checksum = patches.sum()
 			for i in range( len(patches) ):
 				checksum -= patches[i]
-				_check_empty( None, "Pacifier" )
+				_pacify()
 			_check_empty( checksum, "Sum minus all patches should be empty" )
 			print " ok"
 			print "  Swapping: ",
