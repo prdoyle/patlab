@@ -292,7 +292,7 @@ function files_in_active_patch(){
 	CHECK=`ls $BEFORE_DIR/ | head -1` # find doesn't like being given an empty list of places to search
 	if [[ "$CHECK" != "" ]]; then
 		pushdq $BEFORE_DIR
-		find * -type f
+		find * -type f | sort # sorting normalizes the file order, making it easier to compare patches
 		popdq
 	fi
 	)
@@ -538,7 +538,7 @@ function CMD_forget(){
 	local ARCHIVE=""
 	OPTIND=0
 	while getopts "a" option; do case $option in
-		a) archive=1;
+		a) ARCHIVE=1;
 		   [ -d $archive_dir ] || die "archive dir does not exist: $archive_dir"
 		   shift;;
 	esac done

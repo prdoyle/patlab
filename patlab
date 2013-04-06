@@ -698,6 +698,10 @@ class Stack( Enumerable, UIObject ):
 		for patch in self.patches:
 			patch.write_contents_to( file )
 
+	def save( self ):
+		for patch in self.patches:
+			patch.save()
+
 	def __len__( self ): return len( self.patches )
 
 	def __delitem__( self, i ):    self.patches.__delitem__(i)
@@ -833,6 +837,9 @@ class Patch( Enumerable, UIObject, Algebraic ):
 		file = open( filename, "w" )
 		self.write_contents_to( file )
 		file.close()
+
+	def save( self ):
+		self.save_to( self.name )
 
 	def __nonzero__( self ):
 		if self.diffs:
@@ -1640,6 +1647,10 @@ def main():
 				conflict = first % second
 				if conflict:
 					sanitized = first // second
+					try:
+						_check_empty( first - ( conflict + sanitized ), "conflicts plus without_conflicts of %s with %s should equal %s", first.name, second.name, first.name )
+					except ChangeToSameLineError, e:
+						print "Error swapping %d and %d" % (i, i+1)
 					_check_empty( first - ( sanitized + conflict ), "without_conflicts plus conflict of %s with %s should equal %s", first.name, second.name, first.name )
 					first = sanitized
 				combo  = first + second
