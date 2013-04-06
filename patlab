@@ -535,34 +535,41 @@ class Stack( Enumerable, UIObject ):
 		del self.patches[ 0 ]
 		return result
 
+	def sink1( self, index ):
+		"""Move the patch at index[0] downward one position."""
+		sinker  = self.patches[ index ]
+		floater = self.patches[ index+1 ]
+		up   = floater >> sinker
+		down = sinker  << floater
+		up.name   = floater.name
+		down.name = sinker.name
+		self.patches[ index:index+2 ] = [ up, down ]
+		return self
+
 	def sink( self, *index ):
-		"""Move the patch at index[0] downward to index[1] (or index[0]+1 by default)."""
+		"""Move the patch at index[0] downward to index[1] (or bottom by default)."""
 		try:
 			[ start, end ] = index
-			for i in range( start, end ):
-				self.sink( i )
-			return self
 		except ValueError: # only 'start' specified
-			[ index ] = index
-			sinker  = self.patches[ index ]
-			floater = self.patches[ index+1 ]
-			up   = floater >> sinker
-			down = sinker  << floater
-			up.name   = floater.name
-			down.name = sinker.name
-			self.patches[ index:index+2 ] = [ up, down ]
-			return self
+			[ start, end ] = [ index[0], len(self)-1 ]
+		for i in range( start, end ):
+			self.sink1( i )
+		return self
+
+	def float1( self, index ):
+		"""Move the patch at index[0] upward by one position."""
+		[ index ] = index
+		return self.sink( index-1 )
 
 	def float( self, *index ):
-		"""Move the patch at index[0] upward to index[1] (or index[0]-1 by default)."""
+		"""Move the patch at index[0] upward to index[1] (or top by default)."""
 		try:
 			[ start, end ] = index
-			for i in range( start, end, -1 ):
-				self.sink( i-1 )
-			return self
 		except ValueError: # only 'start' specified
-			[ index ] = index
-			return self.sink( index-1 )
+			[ start, end ] = [ index[0], 0 ]
+		for i in range( start, end, -1 ):
+			self.sink1( i-1 )
+		return self
 
 	def squash( self, index ):
 		"""Replace patches at index and index+1 a new patch composed from the original two"""
