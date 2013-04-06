@@ -37,7 +37,8 @@ def _stripped_path( path ):
 		i = 1 + path.find( '/', i )
 	return path[ i: ]
 
-class PatlabError: pass
+class PatlabError:
+	def backward( self ): return self
 
 class PatlabErrorWithMessage( PatlabError ):
 	def __repr__( self ):
@@ -68,6 +69,9 @@ class ChangeToSameLineError( PatlabError ):
 	def __repr__( self ):
 		#return "%s:\n   %s\n   %s" % ( self.__class__.__name__, repr(self.left_line), repr(self.right_line) )
 		return "%s:\n   %s\n   %s\n   %s\n   %s" % ( self.__class__.__name__, repr(self.left_line), repr(self.right_line), repr(self.left_hunk), repr(self.right_hunk) )
+
+	def backward( self ):
+		return ChangeToSameLineError( self.right_hunk, self.left_hunk, self.right_line, self.left_line )
 
 class IncompatibleChangeToSameLineError( ChangeToSameLineError ):
 	def __init__( self, left_hunk, right_hunk, left_line, right_line ):
@@ -121,8 +125,15 @@ class Algebraic:
 
 	# First, a few handy synonyms
 
-	def without  ( self, other ):  return self.compose( other.inverse() )
-	def under    ( self, other ):  return other.compose( self ).without( other.over( self ) )
+	def without( self, other ):
+		return self.compose( other.inverse() )
+
+	def under( self, other ):
+		try:
+			return other.compose( self ).without( other.over( self ) )
+		except PatlabError, e:
+			# We've reversed the operands to the over() function, so the exception's info is backward
+			raise e.backward()
 
 	# The Algebraic operators
 
@@ -375,10 +386,14 @@ class Hunks_With_Lines( Hunks ):
 		self.hunk_filter = _filter( lambda h: _any_line_matches( h, predicate ) )
 
 class Hunks_With_Conflicts( Hunks ):
-	"""A filter for hunks that will conflict with a given "hurdle" patch during the "over" operation"""
+	"""
+	A filter for hunks that will conflict with a given "hurdle" patch if attempting the given operation.
+	The operation takes a hurdle diff and a given diff.
+	"""
 
-	def __init__( self, hurdle_patch ):
-		self.hurdle_patch = hurdle_patch # "hurdle_patch" is the patch you're trying to get over (get it?  ha ha)
+	def __init__( self, hurdle_patch, operation ):
+		self.hurdle_patch = hurdle_patch
+		self.operation    = operation
 
 	def _upper_patch_suffix( self ): return ".conflicts"
 
@@ -392,7 +407,7 @@ class Hunks_With_Conflicts( Hunks ):
 			return [ None, diff ]
 		try:
 			# Fast path: if no conflicts, return early
-			diff.over( hurdle_diff )
+			self.operation( hurdle_diff, diff )
 			# all is well
 			debug( "HWC", "  Original diff has no conflicts" )
 			return [ None, diff ]
@@ -404,8 +419,7 @@ class Hunks_With_Conflicts( Hunks ):
 		while trial_diff:
 			try:
 				# Attempt the operations we want to permit.
-				# I think for now we just want the "over" operator.
-				trial_diff.over( hurdle_diff )
+				self.operation( hurdle_diff, trial_diff )
 				# Everything worked.  trial_diff is uncontroversial.
 				debug( "HWC", "    Done removing conflicts" )
 				conflict_diff.normalize()
@@ -420,17 +434,29 @@ class Hunks_With_Conflicts( Hunks ):
 				trial_diff.normalize()
 				_fix_left_line_numbers( trial_diff.hunks ) # Want to keep the right-context fixed so it stays compatible with hurdle
 
-class Hunks_Without_Conflicts( Hunks ):
+class Hunks_Other_Than( Hunks ):
 
-	def __init__( self, hurdle_patch ):
-		self.complement = Hunks_With_Conflicts( hurdle_patch )
+	def __init__( self, complement ):
+		self.complement = complement
 
-	def _upper_patch_suffix( self ): return ".noconflicts"
+	def _upper_patch_suffix( self ): return ".no" + self.complement._upper_patch_suffix()[1:]
 
 	def partition_diff( self, diff ):
-		result = self.complement.partition_diff( diff )
-		result.reverse()
+		[ first, second ] = self.complement.partition_diff( diff )
+		result = [ first >> second, second << first ]
 		return result
+
+class Hunks_With_Over_Conflicts( Hunks_With_Conflicts ):
+	"""A filter for hunks that will conflict with a given "hurdle" patch during the "over" operation"""
+
+	def __init__( self, hurdle_patch ):
+		Hunks_With_Conflicts.__init__( self, hurdle_patch, lambda h, d: d.over( h ) )
+
+class Hunks_With_Under_Conflicts( Hunks_With_Conflicts ):
+	"""A filter for hunks that will conflict with a given "hurdle" patch during the "under" operation"""
+
+	def __init__( self, hurdle_patch ):
+		Hunks_With_Conflicts.__init__( self, hurdle_patch, lambda h, d: d.under( h ) )
 
 def _changes_only_whitespace( iter ):
 	while iter.more_to_go():
@@ -553,11 +579,11 @@ class Stack( Enumerable, UIObject ):
 
 	def distill( self, index ):
 		"""Replace patch at index with two patches such that the upper patch has no conflicts with patch at index-1."""
-		return self.partition( index, Hunks_Without_Conflicts( self.patches[ index-1 ] ) )
+		return self.partition( index, Hunks_Other_Than( Hunks_With_Over_Conflicts( self.patches[ index-1 ] ) ) )
 
 	def sift( self, index ):
 		"""Replace patch at index with two patches such that the lower patch has no conflicts with patch at index+1."""
-		return self.partition( index, Hunks_With_Conflicts( self.patches[ index+1 ] ) )
+		return self.partition( index, Hunks_With_Under_Conflicts( self.patches[ index+1 ] ) )
 
 	def whitespace_hunks( self, index ):
 		"""Replace patch at index with two patches such that the upper patch has only hunks changing whitespace."""
@@ -798,7 +824,7 @@ class Patch( Enumerable, UIObject, Algebraic ):
 		return self._combine( other, ">>", _over_func )
 
 	def _compute_conflicts( self, other ):
-		return Hunks_With_Conflicts( other ).partition_patch( self )
+		return Hunks_With_Over_Conflicts( other ).partition_patch( self )
 
 	def conflicts( self, other ):
 		return self._compute_conflicts( other )[ 0 ]
@@ -1651,7 +1677,6 @@ def main():
 						_check_empty( first - ( conflict + sanitized ), "conflicts plus without_conflicts of %s with %s should equal %s", first.name, second.name, first.name )
 					except ChangeToSameLineError, e:
 						print "Error swapping %d and %d" % (i, i+1)
-					_check_empty( first - ( sanitized + conflict ), "without_conflicts plus conflict of %s with %s should equal %s", first.name, second.name, first.name )
 					first = sanitized
 				combo  = first + second
 				over   = first >> second
