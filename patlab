@@ -716,7 +716,9 @@ class Stack( Enumerable, UIObject ):
 		patches[ index:index+1 ] = self._edit2([ Patch( original.name + ".upper" ), original ])
 		return self
 
-	def zip( self, filename ):
+	def zip( self, filename=None ):
+		if filename == None:
+			filename = self.name
 		try:
 			z = ZipFile( filename, "w", ZIP_DEFLATED )
 		except RuntimeError:
@@ -1645,6 +1647,7 @@ def main():
 	#argp.add_option( "patches", metavar="patch", nargs="*",  help="Names of patch files to load" ) # This is an argparse thing
 	( args, patch_files ) = argp.parse_args()
 	if len( patch_files ) >= 1:
+		exactly_one_file = ( len(patch_files) == 1 )
 		for patch in patch_files:
 			try:
 				z = ZipFile( patch, "r" )
@@ -1653,6 +1656,8 @@ def main():
 						push( _patch_from( name, z.open( name, "r" ).readlines() ) )
 				finally:
 					z.close()
+				if exactly_one_file: # Name the stack after the zip file
+					patches.name = patch
 			except BadZipfile:
 				push( patch )
 		if args.test:
