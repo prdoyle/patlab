@@ -950,6 +950,8 @@ function CMD_complete(){
 				ls -d $PATCHFILE_DIR/$WORD*$PATCHFILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$PATCHFILE_SUFFIX\$@@" 2> /dev/null;;
 			capture|shelve|revive)
 				ls -d $PATCHFILE_DIR/$WORD*$STACK_FILE_SUFFIX 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@$STACK_FILE_SUFFIX\$@@" 2> /dev/null;;
+			zip|unzip)
+				ls -d $PATCHFILE_DIR/$WORD*.zip 2> /dev/null | sed "s@^$PATCHFILE_DIR/@@; s@.zip\$@@" 2> /dev/null;;
 			pop|patches)
 				grep "^$WORD" $STACK;; # Doesn't work if $WORD contains special regex characters
 			discard)
