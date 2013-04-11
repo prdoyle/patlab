@@ -102,6 +102,14 @@ Patch-specific commands:
 		actually been added to the previously-active patch.  Editing
 		other files could cause you to lose your work.  The files that
 		are safe to edit will be marked writable.
+	merge [-N] {PATCH}
+		Like the apply command, with the following differences: First,
+		while the apply command treats PATCH as though it can be pushed
+		on top of the active patch (like push), merge treats the PATCH
+		as though it can be pushed after popping the active patch; that
+		is, merge deals with the case where the two patches were
+		developed independently.  Second, merge uses diff3, and therefore
+		it will produce annotated output in the case of a conflict.
 
 Patch stack commands:
 	patches [PATCH]
@@ -113,16 +121,25 @@ Patch stack commands:
 		Save the current stacked patch names to the given stack file.
 	shelve {STACK}
 		Equivalent to "capture {STACK}" followed by "pop -a".
-	revive [-p] {STACK}
+	revive [-p -N] {STACK}
 		Push all patches in the given stack file.  Refuses to revive a stack file
 		if there are already patches on the stack, unless -p is present.
 	zip {STACK}
 		Pop all patches, then put them in a zip file called {STACK}.zip.
 		Analogous to the shelve command.
-	unzip [-p] {STACK}
+	unzip [-p -N] {STACK}
 		Unzip {STACK}.zip in the patchfile directory, then push all the patches
 		it contains.  Refuses to push if there are already patches on the stack,
 		unless -p is present.  Analogous to the revive command.
+	import [-N] {PATCH}
+		Like "push", except PATCH is assumed to apply to the codebase before the
+		current patch stack; that is, PATCH is taken to have been developed
+		independently of the current stack.  After this command, a new patch
+		called PATCH is the active patch on top of the stack, having been
+		modified using diff3 to reflect the changes in all the patches under it.
+		Differs from "merge" in that (1) "import" adds a patch to the stack, and 
+		(2) "merge" assumes PATCH applies before the active patch, while "import"
+		assumes PATCH applies before the whole stack.
 
 Maintenance commands:
 	init
@@ -395,6 +412,18 @@ function add_files_to_active_patch(){
 		cp -p $FILE $BACKUP
 		chmod +w $FILE
 		verbose "added $RELATIVE_NAME"
+	done
+}
+
+function before_before(){
+	# Take the "before" files from a certain patch and copy them
+	# into the "way_before" directory of the active patch
+	local SOURCE_PATCH="$1"; shift
+	local SOURCE_DB="$REPOSITORY/$SOURCE_PATCH.d"
+	for FILE; do
+		if [ -f $SOURCE_DB/before/$FILE ] && [ -f $PATCH_DB/way_before/$FILE ]; then
+			cp -f $SOURCE_DB/before/$FILE $PATCH_DB/way_before/$FILE
+		fi
 	done
 }
 
@@ -732,6 +761,47 @@ function CMD_push(){
 	terse $(head -n1 $STACK)
 }
 
+function CMD_import(){
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
+	[ -n "$*" ] || die "Specify at least one patch to import"
+	for NAME; do
+		if patch_is_on_stack $NAME; then
+			verbose "$NAME is already on the stack"
+		else
+			PATCHFILE=$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX
+			[ -r "$PATCHFILE" ] || die "Can't find patch file $PATCHFILE"
+			verbose "Importing patch $NAME from file $PATCHFILE {"
+			begin_patch $NAME ok_to_overwrite # Note: after this, we're sitting in the new patch's root dir by definition
+			standard_variables incomplete_is_ok
+			add_files_to_active_patch $(files_in_patchfile $PATCHFILE)
+			pushdq $PATCH_DB
+				cp -a before way_before
+				for PATCH in `cat $STACK`; do
+					before_before $PATCH $(files_in_patchfile $PATCHFILE)
+				done
+				cp -a way_before to_merge
+				pushdq to_merge
+					patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly at bottom of stack.  Use the \"stipulate\" or \"revert\" command before proceeding."
+				popdq
+				for FILE in $(files_in_active_patch $PATCHFILE); do
+					case "$(diff3 -m before/$FILE way_before/$FILE to_merge/$FILE > after/$FILE; echo $?)" in
+						0) ;;
+						1) verbose "Conflict in $FILE"; CONFLICTS=$((CONFLICTS+1));;
+						*) die "Error merging $FILE; use the \"revert -c\" command to discard all changes since the last \"save\"."
+					esac
+				done
+			popdq
+			if ((CONFLICTS > 0)); then
+				die "$CONFLICTS merge conflicts; use the \"revert\" command to discard all changes since the last \"save\"."
+			fi
+			chmod_files "+w"
+			prepend_line $NAME $STACK
+			verbose "} done."
+		fi
+	done
+	terse $(head -n1 $STACK)
+}
 function CMD_apply(){
 	common_options "N" $*
 	shift $NUM_COMMON_OPTIONS
@@ -865,6 +935,8 @@ function CMD_shelve(){
 }
 
 function CMD_revive(){
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
 	OPTIND=0
 	while getopts "p" Option; do case $Option in
 		p) PARTIAL=1;; # revive on top of other patches
@@ -896,6 +968,8 @@ function CMD_zip(){
 }
 
 function CMD_unzip(){
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
 	OPTIND=0
 	while getopts "p" Option; do case $Option in
 		p) PARTIAL=1;; # revive on top of other patches
@@ -939,7 +1013,7 @@ function CMD_complete_command_line(){
 	local WORD="${COMP_WORDS[$COMP_CWORD]}"
 
 	if [[ "$COMP_CWORD" == "1" ]]; then
-		compgen -W "add apply archive begin capture config diff discard exec files forget init patches pop push repository revert revive root save shelve stipulate version" -- $WORD
+		compgen -W "add apply archive begin capture config diff discard exec files forget import init ls merge patches pop push repository revert revive root save shelve split stipulate sub top unzip view zip version" -- $WORD
 	else
 		case "$COMMAND" in
 			add)
@@ -989,6 +1063,43 @@ function CMD_split(){
 	chmod -R +w "$BEFORE_DIR" # Writeable so the user knows which files are ok to edit
 }
 
+function CMD_merge(){
+	common_options "N" $*
+	shift $NUM_COMMON_OPTIONS
+	[ -n "$*" ] || die "Specify at least one patch to merge"
+	standard_variables
+	local CONFLICTS=0
+	for NAME; do
+		PATCHFILE=$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX
+		[ -r "$PATCHFILE" ] || die "Can't find patch file $PATCHFILE"
+		verbose "Merging patch $NAME from file $PATCHFILE {"
+		add_files_to_active_patch $(files_in_patchfile $PATCHFILE | grep -vFx "`files_in_active_patch;echo`") # echo adds blank line so the grep command succeeds even if active patch has no files
+		pushdq $PATCH_DB
+			mkdir -p to_merge
+			for FILE in $(files_in_active_patch $PATCHFILE); do
+				cp -f before/$FILE to_merge/$FILE
+			done
+			pushdq to_merge
+				patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Unable to merge."
+			popdq
+			for FILE in $(files_in_active_patch $PATCHFILE); do
+				local MERGED=`create_temp_file merged`
+				case "$(diff3 -m after/$FILE before/$FILE to_merge/$FILE > $MERGED; echo $?)" in
+					0) mv $MERGED after/$FILE;;
+					1) verbose "Conflict in $FILE"; mv $MERGED after/$FILE; CONFLICTS=$((CONFLICTS+1));;
+					*) die "Error merging $FILE; use the \"revert -c\" command to discard all changes since the last \"save\"."
+				esac
+			done
+		popdq $PATCH_DB
+		chmod_files "+w"
+		verbose "} done."
+	done
+	if ((CONFLICTS > 0)); then
+		die "$CONFLICTS merge conflicts; use the \"revert\" command to discard all changes since the last \"save\"."
+	fi
+	terse $(head -n1 $STACK)
+}
+
 ###########################
 ##
 ##  Main logic
@@ -1024,14 +1135,16 @@ case $COMMAND in
 	exec)        CMD_exec        $*;;
 	files)       CMD_files       $*;;
 	forget)      CMD_forget      $*;;
+	import)      CMD_import      $*;;
 	init)        CMD_init        $*;;
 	ls)          CMD_patches     $*;;
+	merge)       CMD_merge       $*;;
 	patches)     CMD_patches     $*;;
 	pop)         CMD_pop         $*;;
 	push)        CMD_push        $*;;
 	repository)  CMD_repository  $*;;
-	revive)      CMD_revive      $*;;
 	revert)      CMD_revert      $*;;
+	revive)      CMD_revive      $*;;
 	root)        CMD_root        $*;;
 	save)        CMD_save        $*;;
 	shelve)      CMD_shelve      $*;;
