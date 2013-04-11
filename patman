@@ -919,14 +919,14 @@ function CMD_unzip(){
 	verbose "} done."
 }
 
-function CMD_complete(){
+function CMD_complete_command_line(){
 	local SHELL=$1; shift
 	[[ "$SHELL" == "bash" ]] || die "Only bash shell expansion is supported"
 
 	# Put this in your .bashrc :
 	#
 	# function complete_patman {
-        #	COMPREPLY=(`patman complete bash $COMP_CWORD ${COMP_WORDS[@]}`)
+        #	COMPREPLY=(`patman complete_command_line bash $COMP_CWORD ${COMP_WORDS[@]}`)
 	# }
 	# complete -F complete_patman patman
 
@@ -1018,7 +1018,6 @@ case $COMMAND in
 	begin)       CMD_begin       $*;;
 	blame)       CMD_blame       $*;;
 	capture)     CMD_capture     $*;;
-	complete)    CMD_complete    $*;;
 	config)      CMD_config      $*;;
 	diff)        CMD_diff        $*;;
 	discard)     CMD_discard     $*;;
@@ -1044,6 +1043,8 @@ case $COMMAND in
 	view)        CMD_view        $*;;
 	zip)         CMD_zip         $*;;
 
+	# Not meant to be entered by hand, so we don't care about how long the command name is
+	complete_command_line)    CMD_complete_command_line    $*;;
 
 	version)   version      ;;
 	-v)        version      ;;
