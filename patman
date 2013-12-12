@@ -98,10 +98,10 @@ Patch-specific commands:
 		effectively backporting some of the changes back into the
 		previously active patch.  This has the effect of dividing the
 		active patch into two patches.
-		*NOTE*: Only edit the "before" versions of files that have
+		*NOTE*: Only edit the "before" versions of a file if it had
 		actually been added to the previously-active patch.  Editing
-		other files could cause you to lose your work.  The files that
-		are safe to edit will be marked writable.
+		other "before" files could cause you to lose your work.  The
+		files that are safe to edit will be marked writable.
 	merge [-N] {PATCH}
 		Like the apply command, with the following differences: First,
 		while the apply command treats PATCH as though it can be pushed
