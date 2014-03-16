@@ -752,7 +752,7 @@ function CMD_push(){
 			begin_patch $NAME ok_to_overwrite # Note: after this, we're sitting in the new patch's root dir by definition
 			standard_variables incomplete_is_ok
 			add_files_to_active_patch $(files_in_patchfile $PATCHFILE)
-			patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Use the \"stipulate\" or \"revert\" command before proceeding."
+			patch --ignore-whitespace -p$PATH_STRIP $EXTRA_PATCH_OPTS < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Use the \"stipulate\" or \"revert\" command before proceeding."
 			chmod_files "+w"
 			prepend_line $NAME $STACK
 			verbose "} done."
@@ -782,7 +782,7 @@ function CMD_import(){
 				done
 				cp -a way_before to_merge
 				pushdq to_merge
-					patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly at bottom of stack.  Use the \"stipulate\" or \"revert\" command before proceeding."
+					patch --ignore-whitespace -p$PATH_STRIP $EXTRA_PATCH_OPTS < $PATCHFILE 1>&2 || die "Patch did not apply cleanly at bottom of stack.  Use the \"stipulate\" or \"revert\" command before proceeding."
 				popdq
 				for FILE in $(files_in_active_patch $PATCHFILE); do
 					case "$(diff3 -m before/$FILE way_before/$FILE to_merge/$FILE > after/$FILE; echo $?)" in
@@ -803,16 +803,22 @@ function CMD_import(){
 	terse $(head -n1 $STACK)
 }
 function CMD_apply(){
-	common_options "N" $*
-	shift $NUM_COMMON_OPTIONS
+	#common_options "N" $*
+	#shift $NUM_COMMON_OPTIONS
+	local PATCH_OPTS=""
+	OPTIND=0
+	while getopts "R" Option; do case $Option in
+		R) PATCH_OPTS="-R";;
+	esac done
+	shift $(($OPTIND - 1))
 	[ -n "$*" ] || die "Specify at least one patch to apply"
 	standard_variables
 	for NAME; do
 		PATCHFILE=$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX
 		[ -r "$PATCHFILE" ] || die "Can't find patch file $PATCHFILE"
 		verbose "Applying patch $NAME from file $PATCHFILE {"
-		add_files_to_active_patch $(files_in_patchfile $PATCHFILE | grep -vFx "`files_in_active_patch;echo`") # echo adds blank line so the grep command succeeds even if active patch has no files
-		patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Use the \"stipulate\" or \"revert\" command before proceeding."
+		add_files_to_active_patch $(files_in_patchfile $PATCHFILE | grep -vFx "`files_in_active_patch;echo`") # echo adds blank line so the grep command succeeds even if active patch has no filects
+		patch --ignore-whitespace -p$PATH_STRIP $PATCH_OPTS $EXTRA_PATCH_OPTS < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Use the \"stipulate\" or \"revert\" command before proceeding."
 		chmod_files "+w"
 		verbose "} done."
 	done
@@ -1080,7 +1086,7 @@ function CMD_merge(){
 				cp -f before/$FILE to_merge/$FILE
 			done
 			pushdq to_merge
-				patch --ignore-whitespace -p$PATH_STRIP < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Unable to merge."
+				patch --ignore-whitespace -p$PATH_STRIP $EXTRA_PATCH_OPTS < $PATCHFILE 1>&2 || die "Patch did not apply cleanly.  Unable to merge."
 			popdq
 			for FILE in $(files_in_active_patch $PATCHFILE); do
 				local MERGED=`create_temp_file merged`
@@ -1114,6 +1120,7 @@ PATCHFILE_DIR=${PATMAN_PATCHFILE_DIR:-.} # This shouldn't be blank or weird thin
 ARCHIVE_DIR=$PATCHFILE_DIR/archive
 PATCHFILE_SUFFIX=${PATMAN_PATCHFILE_SUFFIX:-.patch}
 EXTRA_DIFF_OPTS=${PATMAN_EXTRA_DIFF_OPTS:-}
+EXTRA_PATCH_OPTS=${PATMAN_EXTRA_PATCH_OPTS:-}
 DIFF_VIEWER=${PATMAN_DIFF_VIEWER:-vimdiff}
 REPOSITORY=${PATMAN_REPOSITORY:-$HOME/.patman}
 STACK="$REPOSITORY/stack"
