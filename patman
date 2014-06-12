@@ -62,10 +62,12 @@ Patch-specific commands:
 		List the files in the active patch.  If {PATCH} is given, lists files in that patch file.
 	diff
 		Show the changes within the active patch on stdout.
-	view {FILE} ...
+	view [-r] {FILE} ...
 		Compare the given files before and after the active patch.
 		FILE is relative to the patch root directory; that is, the FILE
 		argument must be one of the files listed by "patman files".
+		-r ("right-to-left", or "reverse") puts the original file on
+		the right; the default puts the modified file on the right.
 	save
 		Update the active patch to reflect the state of the sandbox.
 	push [-N] {PATCH}
@@ -612,12 +614,22 @@ function CMD_diff(){
 
 function CMD_view(){
 	standard_variables
+	local BEFORE_SIDE="left"
+	OPTIND=0
+	while getopts "r" option; do case $option in
+		r) BEFORE_SIDE="right";
+		   shift;;
+	esac done
 	for FILE; do # File names are relative to root
 		local BEFORE="$BEFORE_DIR/$FILE"
 		local AFTER="$AFTER_DIR/$FILE"
 		[ -e "$BEFORE" ] || die "$FILE is not in active patch"
 		[ -e "$AFTER" ]  || die "$AFTER not found"
-		$DIFF_VIEWER $BEFORE_DIR/$FILE $AFTER_DIR/$FILE
+		if [[ "$BEFORE_SIDE" == "left" ]]; then
+			$DIFF_VIEWER $BEFORE_DIR/$FILE $AFTER_DIR/$FILE
+		else
+			$DIFF_VIEWER $AFTER_DIR/$FILE $BEFORE_DIR/$FILE
+		fi
 	done
 }
 
