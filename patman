@@ -317,6 +317,20 @@ function files_in_active_patch(){
 	)
 }
 
+function files_in_patch_on_stack(){
+	standard_variables
+	local ACTIVE_PATCH="$PATCH_NAME"
+	local PATCH
+	for PATCH; do
+		local PATCHFILE="$PATCHFILE_DIR/$PATCH$PATCHFILE_SUFFIX" # TODO: Come to think of it, I should make a handy function for this.
+		if [[ "$PATCH" == "$ACTIVE_PATCH" ]]; then
+			files_in_active_patch
+		else
+			files_in_patchfile "$PATCHFILE"
+		fi
+	done
+}
+
 function files_in_patchfile(){
 	cat $* | grep '^---.*[^-]$' | cut -d/ -f$((PATH_STRIP+1))- | cut -f1
 }
@@ -658,7 +672,10 @@ function CMD_files(){
 		standard_variables
 		files_in_active_patch
 	else
-		for NAME; do files_in_patchfile $PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX; done # TODO: Expand the patch name into a patchfile path.  Come to think of it, I should make a handy function for this.
+		for NAME; do
+			local PATCHFILE="$PATCHFILE_DIR/$NAME$PATCHFILE_SUFFIX"
+			files_in_patchfile "$PATCHFILE";
+		done
 	fi
 }
 
@@ -699,7 +716,7 @@ function CMD_patches(){
 				echo "$PATCH"
 			fi
 			if [[ "$VERBOSE" == "yes" ]]; then
-				files_in_patchfile $PATCHFILE_DIR/$PATCH$PATCHFILE_SUFFIX | awk '{printf "   %s\n",$1}'
+				files_in_patch_on_stack $PATCH | awk '{printf "   %s\n",$1}' # Indent a little
 			fi
 		done
 	else
@@ -953,8 +970,8 @@ function CMD_shelve(){
 }
 
 function CMD_revive(){
-	common_options "N" $*
-	shift $NUM_COMMON_OPTIONS
+	#common_options "N" $*  # THIS CONFLICTS WITH THE MORE IMPORTANT -p OPTION
+	#shift $NUM_COMMON_OPTIONS
 	OPTIND=0
 	while getopts "p" Option; do case $Option in
 		p) PARTIAL=1;; # revive on top of other patches
