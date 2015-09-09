@@ -411,7 +411,7 @@ function begin_patch(){
 	mkdir $PATCH_DB || die "Cannot create new patch-db $PATCH_DB"
 	mkdir $PATCH_DB/before
 	prepend_line $PATCH_NAME $REVERTIBLE
-	ln -s $PWD $PATCH_DB/after
+	ln -s "$PWD" $PATCH_DB/after
 }
 
 function add_files_to_active_patch(){

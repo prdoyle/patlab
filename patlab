@@ -44,6 +44,10 @@ class PatlabErrorWithMessage( PatlabError ):
 	def __repr__( self ):
 		return "%s( \"%s\" )" % ( self.__class__.__name__, self.message )
 
+class InternalError( PatlabErrorWithMessage ):
+	def __init__( self, message ):
+		self.message = message
+
 class ParseError( PatlabErrorWithMessage ):
 	def __init__( self, message ):
 		self.message = message
@@ -624,6 +628,21 @@ class Stack( Enumerable, UIObject ):
 		"""
 		return self.partition( index, Diffs( lambda d: fnmatch.filter( [ d.lname, d.rname ], filename_pattern ) ) )
 
+	def glob_all( self, filename_pattern ):
+		"""
+		"""
+		# Make each patch into two
+		for i in range( len(self)-1, -1, -1 ):
+			self.glob( i, filename_pattern )
+		# Float the matching patches
+		for i in range( 1, len(self)/2 ):
+			self.float( 2*i, i )
+		# Squash all empty patches
+		for i in range( len(self)-1, -1, -1 ):
+			if not self[i]:
+				self.squash(i)
+		return self
+
 	def float_conflicts( self, *indexes ):
 		"""
 		Find and print the indexes of all patches that would conflict were we to
@@ -1082,13 +1101,38 @@ class Diff( Enumerable, UIObject, Algebraic ):
 		else:
 			return False
 
-	def compose( self, other ):
+	def _easy_compose( self, other ):
 		if self.rname != other.lname:
 			raise MismatchedFilenameError
-		elif other.is_identity():
+
+		# Let's not break our brains over these easy cases
+		if self.is_identity() or other.is_identity():
+			debug( "easy_compose", "easy_compose -- identity has no effect" );
 			return self
-		elif self.is_identity():
-			return other
+
+		if not self.hunks:
+			raise InternalError( "Pure renaming patches are not yet handled cleanly" )
+			debug( "easy_compose", "easy_compose -- self has no hunks" );
+			result = other.copy()
+			result.lpath = self.lpath
+			return result.normalize()
+		elif not other.hunks:
+			raise InternalError( "Pure renaming patches are not yet handled cleanly" )
+			debug( "easy_compose", "easy_compose -- other has no hunks" );
+			result = self.copy()
+			result.rpath = other.rpath
+			return result.normalize()
+		else:
+			# Gotta do it the hard way
+			debug( "easy_compose", "easy_compose -- Both patches have hunks; scanning line-wise" );
+			return None
+
+	def compose( self, other ):
+		result = self._easy_compose( other)
+		if result:
+			return result
+		else:
+			result = Diff( self.lpath, other.rpath )
 
 		# Line domains:
 		# If self maps file f1 to f2, and other maps f2 to f3, then self+other maps f1 to f3.
@@ -1096,7 +1140,6 @@ class Diff( Enumerable, UIObject, Algebraic ):
 
 		self_iter  = _Diff_Line_Iterator( self  )
 		other_iter = _Diff_Line_Iterator( other )
-		result = Diff( self.lpath, other.rpath )
 		[ n1, n2 ] = self_iter .line_numbers()
 		[ n3, n4 ] = other_iter.line_numbers()
 		assert( n1 == n2 and n3 == n4 ) # Nothing has happened yet to put these out of sync
@@ -1181,10 +1224,11 @@ class Diff( Enumerable, UIObject, Algebraic ):
 		return result.normalize()
 
 	def over( self, other ):
-		if self.rname != other.lname:
-			raise MismatchedFilenameError
-		elif self.is_identity() or other.is_identity(): # Let's not break our brains over this case
-			return self
+		result = self._easy_compose( other)
+		if result:
+			return result
+		else:
+			result = Diff( self.lpath, other.rpath )
 
 		# Line domains:
 		# Suppose self maps file f1 to f2, and other maps f2 to f3.
@@ -1195,7 +1239,6 @@ class Diff( Enumerable, UIObject, Algebraic ):
 
 		self_iter  = _Diff_Line_Iterator( self  )
 		other_iter = _Diff_Line_Iterator( other )
-		result = Diff( self.lpath, other.rpath )
 		[ n1, n2 ] = self_iter .line_numbers()
 		[ n3, n4 ] = other_iter.line_numbers()
 		assert( n1 == n2 and n3 == n4 ) # Nothing has happened yet to put these out of sync
@@ -1324,7 +1367,8 @@ class Diff( Enumerable, UIObject, Algebraic ):
 	def num_input_lines( self ):
 		return 2 + sum([ hunk.num_input_lines() for hunk in self.hunks ])
 
-	def is_identity( self ): return len( self.hunks ) == 0 # Note: before normalization, technically we'd have to check every hunk
+	def is_identity( self ):
+		return ( self.lpath == self.rpath ) and len( self.hunks ) == 0 # Note: before normalization, technically we'd have to check every hunk
 
 def _range_cmp( start, stop, needle ):
 	if needle < start:
@@ -1568,6 +1612,8 @@ def _diff_from( left_descriptor, right_descriptor, hunk_content ):
 	debug( "parse", "_diff_from( \"%s\", \"%s\" )", left_descriptor, right_descriptor )
 	[ left_prefix,  lpath ] = left_descriptor.split( None, 2 )[ 0:2 ]
 	[ right_prefix, rpath ] = right_descriptor.split( None, 2 )[ 0:2 ]
+	if left_descriptor[0] == '\\':
+		raise ParseError( "TODO: Can't yet handle 'no newline' directive in the right side of a diff!" )
 	if left_prefix != "---":
 		raise ParseError( "Expected ---; found %s\nHINT: Consider using --junk-between-patches" % left_descriptor )
 	if right_prefix != "+++":
@@ -1597,10 +1643,14 @@ def _patch_from( name, diff_content ):
 		if args.junk_between_diffs and ( left_descriptor[ 0:4 ] != "--- " ):
 			diff_content = diff_content[ 1: ]
 		else:
+			try:
 			right_descriptor = diff_content[1]
 			diff = _diff_from( left_descriptor, right_descriptor, diff_content[ 2: ] )
 			result.diffs.append( diff )
 			diff_content = diff_content[ diff.num_input_lines(): ]
+			except ParseError,e:
+				e.message = "Error parsing %s:\n%s" % ( name, e.message )
+				raise
 	return result.normalize()
 
 patches = Stack("patches")
